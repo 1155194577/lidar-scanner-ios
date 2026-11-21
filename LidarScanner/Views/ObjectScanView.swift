@@ -450,12 +450,7 @@ final class ObjectScanModel: ObservableObject {
                         self.phase = .reconstructing(fraction)
                     case .requestComplete:
                         self.photogrammetry = nil
-                        do {
-                            _ = try FileManager.default.replaceItemAt(outputURL, withItemAt: built)
-                            await self.check(outputURL)
-                        } catch {
-                            self.phase = .failed("Couldn't save the model: \(error.localizedDescription)")
-                        }
+                        await self.save(built, to: outputURL)
                     case .requestError(_, let error):
                         self.phase = .failed("Reconstruction failed: \(error.localizedDescription)")
                     case .processingCancelled:
@@ -478,16 +473,33 @@ final class ObjectScanModel: ObservableObject {
         phase = .done(model, report)
     }
 
-    private func fakeBuild(fixtureKey: String) {
-        guard let outputURL else { return }
-        captureCount += 1
-        let contents = ProcessInfo.processInfo.environment[fixtureKey].flatMap { Data(base64Encoded: $0) } ?? Data()
+    /// Moves a finished build over the saved scan; the first build has no saved scan to replace yet.
+    private func save(_ built: URL, to outputURL: URL) async {
+        let manager = FileManager.default
         do {
-            try contents.write(to: outputURL)
+            if manager.fileExists(atPath: outputURL.path) {
+                _ = try manager.replaceItemAt(outputURL, withItemAt: built)
+            } else {
+                try manager.moveItem(at: built, to: outputURL)
+            }
         } catch {
             phase = .failed("Couldn't save the model: \(error.localizedDescription)")
             return
         }
-        tasks.append(Task { [weak self] in await self?.check(outputURL) })
+        await check(outputURL)
+    }
+
+    private func fakeBuild(fixtureKey: String) {
+        guard let workspace, let outputURL else { return }
+        captureCount += 1
+        let built = workspace.appendingPathComponent("Model-\(captureCount).usdz")
+        let contents = ProcessInfo.processInfo.environment[fixtureKey].flatMap { Data(base64Encoded: $0) } ?? Data()
+        do {
+            try contents.write(to: built)
+        } catch {
+            phase = .failed("Couldn't save the model: \(error.localizedDescription)")
+            return
+        }
+        tasks.append(Task { [weak self] in await self?.save(built, to: outputURL) })
     }
 }
