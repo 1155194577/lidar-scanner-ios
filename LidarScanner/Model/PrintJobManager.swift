@@ -7,6 +7,7 @@ struct PrintJob: Identifiable, Codable {
     let name: String
     let kind: String
     let baseURL: String
+    var sourceScanFileName: String?
     var progress = PrintProgress.uploading
     var resultPath: String?
     var result: URL? {
@@ -21,7 +22,7 @@ struct PrintJob: Identifiable, Codable {
 
 extension PrintJob {
     private enum CodingKeys: String, CodingKey {
-        case id, name, kind, baseURL, progress, resultPath, result, error, accepted, retryFromStart
+        case id, name, kind, baseURL, sourceScanFileName, progress, resultPath, result, error, accepted, retryFromStart
     }
 
     init(from decoder: Decoder) throws {
@@ -30,6 +31,7 @@ extension PrintJob {
         name = try values.decode(String.self, forKey: .name)
         kind = try values.decode(String.self, forKey: .kind)
         baseURL = try values.decode(String.self, forKey: .baseURL)
+        sourceScanFileName = try values.decodeIfPresent(String.self, forKey: .sourceScanFileName) ?? (kind == "scan" ? name + ".usdz" : nil)
         progress = try values.decodeIfPresent(PrintProgress.self, forKey: .progress) ?? .uploading
         resultPath = try values.decodeIfPresent(String.self, forKey: .resultPath)
         if resultPath == nil, let legacy = try values.decodeIfPresent(URL.self, forKey: .result),
@@ -48,6 +50,7 @@ extension PrintJob {
         try values.encode(name, forKey: .name)
         try values.encode(kind, forKey: .kind)
         try values.encode(baseURL, forKey: .baseURL)
+        try values.encodeIfPresent(sourceScanFileName, forKey: .sourceScanFileName)
         try values.encode(progress, forKey: .progress)
         try values.encodeIfPresent(resultPath, forKey: .resultPath)
         try values.encodeIfPresent(error, forKey: .error)
@@ -91,7 +94,8 @@ final class PrintJobManager: ObservableObject {
     }
 
     func start(input: PrintInput, name: String, kind: String) {
-        let job = PrintJob(id: UUID().uuidString, name: name, kind: kind, baseURL: PrintService.configuredBaseURL)
+        var job = PrintJob(id: UUID().uuidString, name: name, kind: kind, baseURL: PrintService.configuredBaseURL)
+        if case .mesh(let url) = input { job.sourceScanFileName = url.lastPathComponent }
         jobs.append(job)
         inputs[job.id] = input
         tokens[job.id] = currentToken()
@@ -101,6 +105,10 @@ final class PrintJobManager: ObservableObject {
 
     func canRetry(_ job: PrintJob) -> Bool {
         !(job.retryFromStart || job.baseURL != PrintService.configuredBaseURL) || inputs[job.id] != nil
+    }
+
+    func printedModel(for job: PrintJob) -> PrintedModel? {
+        job.result.map { PrintedModel(url: $0, sourceScanFileName: job.sourceScanFileName) }
     }
 
     func retry(_ job: PrintJob) {

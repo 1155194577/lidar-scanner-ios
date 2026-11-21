@@ -552,6 +552,69 @@ final class PrintServiceTests: XCTestCase {
         XCTAssertThrowsError(try PrintBackgroundDownload.saveResponse(nil, file: file, id: "missing"))
     }
 
+    @MainActor
+    func testRestoredScanResultsSaveBesideSourceForBothTransfers() throws {
+        let store = ScanStore(directory: directory.appendingPathComponent("Scans"))
+        store.seedSamples(contents: Data("mesh".utf8))
+        let scan = try XCTUnwrap(store.scans.first)
+        for transfer in [PrintJobManager.Transfer.stream, .download] {
+            let suite = "PrintJobs-\(UUID().uuidString)"
+            let defaults = UserDefaults(suiteName: suite)!
+            defer { defaults.removePersistentDomain(forName: suite) }
+            let manager = PrintJobManager(defaults: defaults, notifications: false, makeService: { _, _ in throw CancellationError() })
+            manager.start(input: .mesh(scan.url), name: scan.name, kind: "scan")
+            let restored = PrintJobManager(defaults: defaults, notifications: false)
+            let job = try XCTUnwrap(restored.jobs.first)
+            XCTAssertNil(restored.printedModel(for: job))
+            XCTAssertEqual(job.sourceScanFileName, scan.url.lastPathComponent)
+            let source = directory.appendingPathComponent("received.stl")
+            try Data("printed mesh".utf8).write(to: source)
+            restored.complete(id: job.id, result: .success(source), source: transfer)
+            let model = try XCTUnwrap(restored.printedModel(for: restored.jobs[0]))
+            try model.save(in: store)
+            let saved = try XCTUnwrap(store.scans.first(where: { $0.id == scan.id })?.printedSTLURL)
+            XCTAssertEqual(saved, scan.url.deletingPathExtension().appendingPathExtension("stl"))
+            XCTAssertEqual(try Data(contentsOf: saved), Data("printed mesh".utf8))
+            restored.dismiss(restored.jobs[0])
+            manager.dismiss(job)
+            XCTAssertTrue(FileManager.default.fileExists(atPath: saved.path))
+        }
+    }
+
+    @MainActor
+    func testRestoredPhotoResultsSaveAsStandalonePrintsForBothTransfers() throws {
+        let store = ScanStore(directory: directory.appendingPathComponent("Scans"))
+        for transfer in [PrintJobManager.Transfer.stream, .download] {
+            let suite = "PrintJobs-\(UUID().uuidString)"
+            let defaults = UserDefaults(suiteName: suite)!
+            defer { defaults.removePersistentDomain(forName: suite) }
+            let manager = PrintJobManager(defaults: defaults, notifications: false, makeService: { _, _ in throw CancellationError() })
+            manager.start(input: .photo(Data([1]), heightMM: 10), name: "Photo result", kind: "photo")
+            let restored = PrintJobManager(defaults: defaults, notifications: false)
+            let job = try XCTUnwrap(restored.jobs.first)
+            let source = directory.appendingPathComponent("received.stl")
+            try Data("photo mesh".utf8).write(to: source)
+            restored.complete(id: job.id, result: .success(source), source: transfer)
+            let model = try XCTUnwrap(restored.printedModel(for: restored.jobs[0]))
+            XCTAssertNil(model.sourceScanFileName)
+            try model.save(in: store)
+            XCTAssertTrue(store.scans.allSatisfy { $0.kind == .photo })
+            XCTAssertEqual(store.scans.count, transfer == .stream ? 1 : 2)
+            restored.dismiss(restored.jobs[0])
+            manager.dismiss(job)
+        }
+    }
+
+    @MainActor
+    func testSavingResultForDeletedScanDoesNotCreatePhotoPrint() throws {
+        let store = ScanStore(directory: directory.appendingPathComponent("Scans"))
+        let source = directory.appendingPathComponent("received.stl")
+        try Data("mesh".utf8).write(to: source)
+        let model = PrintedModel(url: source, sourceScanFileName: "Deleted.usdz")
+        XCTAssertThrowsError(try model.save(in: store))
+        XCTAssertTrue(store.scans.isEmpty)
+    }
+
     private func service(stallTimeout: TimeInterval = 10, token: String? = nil) throws -> PrintService {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [StubProtocol.self]

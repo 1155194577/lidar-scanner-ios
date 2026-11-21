@@ -80,8 +80,21 @@ struct PhotoPrintView: View {
 
 struct PrintedModel: Identifiable {
     let url: URL
-    var sourceScan: ScanFile? = nil
+    var sourceScanFileName: String? = nil
     var id: URL { url }
+
+    @MainActor
+    func save(in store: ScanStore) throws {
+        if let fileName = sourceScanFileName {
+            store.reload()
+            guard let scan = store.scans.first(where: { $0.url.lastPathComponent == fileName && $0.kind != .photo }) else {
+                throw CocoaError(.fileNoSuchFile)
+            }
+            try store.savePrintedSTL(url, for: scan)
+        } else {
+            try store.savePhotoPrint(url)
+        }
+    }
 }
 
 struct PrintResultView: View {
@@ -104,7 +117,7 @@ struct PrintResultView: View {
                             .foregroundStyle(.secondary)
                     } else {
                         Button(action: save) {
-                            Label(model.sourceScan == nil ? "Save to My Scans" : "Save to Scan", systemImage: "square.and.arrow.down")
+                            Label(model.sourceScanFileName == nil ? "Save to My Scans" : "Save to Scan", systemImage: "square.and.arrow.down")
                         }
                     }
                     Button {
@@ -137,11 +150,7 @@ struct PrintResultView: View {
 
     private func save() {
         do {
-            if let scan = model.sourceScan {
-                try store.savePrintedSTL(model.url, for: scan)
-            } else {
-                try store.savePhotoPrint(model.url)
-            }
+            try model.save(in: store)
             isSaved = true
         } catch {
             saveError = error.localizedDescription
