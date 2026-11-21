@@ -1,20 +1,24 @@
 #!/usr/bin/env python3
 """Local stand-in for the print endpoint, for development and UI tests.
 
-POST /print takes multipart form data with either `mesh` (an .obj, .ply or .usdz
-file in metres) or `photo` + `height_mm`, and answers with a small STL cube as
-`model/stl`. Anything else gets a 400 with a plain-text reason.
+Mirrors the live contract: POST /print takes multipart form data with either
+`mesh` (an .obj, .ply or .usdz file in metres) or `photo` (.jpg/.png) plus an
+optional `height_mm`, and answers with a small STL cube as `model/stl` and an
+`X-Print-Report` JSON header. Errors are JSON `{"detail": ...}`. With --token,
+requests must carry `Authorization: Bearer <token>` or get a 401.
 
     python3 scripts/print_stub.py            # listens on 0.0.0.0:8765
-    python3 scripts/print_stub.py --port 9000 --delay 2
+    python3 scripts/print_stub.py --port 9000 --delay 2 --token secret
 """
 import argparse
 import email.parser
 import email.policy
+import json
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 MESH_EXTENSIONS = (".obj", ".ply", ".usdz")
+PHOTO_EXTENSIONS = (".jpg", ".jpeg", ".png")
 MAX_UPLOAD_BYTES = 200 * 1024 * 1024
 
 
@@ -54,6 +58,7 @@ def parse_multipart(content_type, body):
 
 class Handler(BaseHTTPRequestHandler):
     delay = 0.0
+    token = None
     timeout = 60
 
     def do_GET(self):
@@ -64,43 +69,60 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         if self.path.rstrip("/") != "/print":
-            return self.reply(404, "text/plain", b"not found\n")
+            return self.error(404, "not found")
+        if self.token and self.headers.get("Authorization") != "Bearer " + self.token:
+            self.close_connection = True
+            return self.error(401, "missing or invalid token")
         content_type = self.headers.get("Content-Type", "")
         if not content_type.startswith("multipart/form-data"):
-            return self.reply(400, "text/plain", b"expected multipart/form-data\n")
+            return self.error(400, "expected multipart/form-data")
         try:
             length = int(self.headers.get("Content-Length", ""))
         except ValueError:
-            return self.reply(411, "text/plain", b"Content-Length required\n")
+            return self.error(411, "Content-Length required")
         if length < 0 or length > MAX_UPLOAD_BYTES:
             self.close_connection = True
-            return self.reply(413, "text/plain", b"upload larger than %d MB\n" % (MAX_UPLOAD_BYTES // (1024 * 1024)))
+            return self.error(413, "upload larger than %d MB" % (MAX_UPLOAD_BYTES // (1024 * 1024)))
         body = self.rfile.read(length)
         parts = parse_multipart(content_type, body)
 
+        if ("mesh" in parts) == ("photo" in parts):
+            return self.error(400, "send exactly one of mesh or photo")
         if "mesh" in parts:
             filename, data = parts["mesh"]
             if not filename or not filename.lower().endswith(MESH_EXTENSIONS):
-                return self.reply(400, "text/plain", b"mesh must be an .obj, .ply or .usdz file\n")
+                return self.error(415, "mesh must be an .obj, .ply or .usdz file")
             if not data:
-                return self.reply(400, "text/plain", b"mesh is empty\n")
+                return self.error(400, "mesh is empty")
             source = "mesh %s (%d bytes)" % (filename, len(data))
             stem = filename.rsplit(".", 1)[0]
-        elif "photo" in parts and "height_mm" in parts:
-            try:
-                height = float(parts["height_mm"][1].decode())
-            except ValueError:
-                height = 0
-            if height <= 0 or not parts["photo"][1]:
-                return self.reply(400, "text/plain", b"photo and a positive height_mm are required\n")
-            source = "photo (%d bytes), height %g mm" % (len(parts["photo"][1]), height)
-            stem = "photo"
         else:
-            return self.reply(400, "text/plain", b"send either mesh, or photo and height_mm\n")
+            filename, data = parts["photo"]
+            if not filename or not filename.lower().endswith(PHOTO_EXTENSIONS):
+                return self.error(415, "photo must be a .jpg or .png file")
+            if not data:
+                return self.error(400, "photo is empty")
+            source = "photo (%d bytes)" % len(data)
+            if "height_mm" in parts:
+                try:
+                    height = float(parts["height_mm"][1].decode())
+                except ValueError:
+                    height = 0
+                if height <= 0:
+                    return self.error(422, "height_mm must be a positive number")
+                source += ", height %g mm" % height
+            stem = "photo"
 
         self.log_message("print request: %s", source)
         time.sleep(self.delay)
-        self.reply(200, "model/stl", cube_stl(), {"Content-Disposition": 'attachment; filename="%s.stl"' % stem})
+        report = {"extents_mm": [20.0, 20.0, 20.0], "watertight": True, "volume_cm3": 8.0}
+        self.reply(200, "model/stl", cube_stl(), {
+            "Content-Disposition": 'attachment; filename="%s.stl"' % stem,
+            "X-Print-Report": json.dumps(report),
+        })
+
+    def error(self, status, detail):
+        self.reply(status, "application/json", json.dumps({"detail": detail}).encode())
 
     def reply(self, status, content_type, body, headers=None):
         self.send_response(status)
@@ -117,8 +139,10 @@ def main():
     parser.add_argument("--host", default="0.0.0.0")
     parser.add_argument("--port", type=int, default=8765)
     parser.add_argument("--delay", type=float, default=0.0, help="seconds to wait before answering")
+    parser.add_argument("--token", help="require Authorization: Bearer <token>")
     args = parser.parse_args()
     Handler.delay = args.delay
+    Handler.token = args.token
     server = ThreadingHTTPServer((args.host, args.port), Handler)
     print("Print stub listening on http://%s:%d/print" % (args.host, args.port), flush=True)
     server.serve_forever()

@@ -30,27 +30,30 @@ Apps signed with a free Personal Team expire after 7 days; reconnect the phone a
 ## Using it
 
 - **Room Scan:** tap *Room Scan*, walk slowly around the room pointing the phone at walls, floor and furniture, tap **Done**, then **Save Scan**.
+- **Photo Print:** point the phone at an object, tap where it sits on the surface, then tap its top. The app measures the height with LiDAR; tap **Take Photo & Print** to send one photo plus that height to the print server, which builds the model from the photo and scales it to the measured height.
 - **Object Scan:** put the object on a plain surface with room to walk around it. Tap **Continue**, fit the box around the object, tap **Start Capture** and circle it slowly. When the pass completes, do **Another Pass** (e.g. with the object flipped) or **Finish**. The model is then built on the phone, which takes a few minutes.
 
 ## Printing a scan
 
 Tap the printer icon on a scan in **My Scans**. The app uploads the scan's mesh to the print server and opens the STL it returns in the share sheet, so you can send it to a slicer app (or *Save to Files*).
 
-Set the server in **Settings** (gear icon on the home screen). The default is `http://localhost:8765`, set by `PRINT_BASE_URL` in `project.yml`. The app calls:
+Set the server and token in **Settings** (gear icon on the home screen). The default server is `https://slesvci--3d-print-web.us-east.modal.run`, set by `PRINT_BASE_URL` in `project.yml`; the token (`PRINT_API_TOKEN`) is kept in the Keychain. The app calls:
 
 ```
-POST {server}/print   multipart/form-data
+POST {server}/print   multipart/form-data, Authorization: Bearer <token>
   mesh=<scan .usdz, metres>          (or photo=<jpeg> + height_mm=<number>)
-→ 200 model/stl
+→ 200 model/stl  (X-Print-Report header); errors are JSON {"detail"}
 ```
 
-Until the real endpoint is deployed, run the stub, which answers every valid request with a 20 mm cube:
+A cold start of the live server takes about 2 minutes, so the first print can be slow.
+
+For offline development, run the stub, which answers every valid request with a 20 mm cube:
 
 ```sh
-python3 scripts/print_stub.py   # listens on port 8765
+python3 scripts/print_stub.py --token stub-token   # listens on port 8765
 ```
 
-On the simulator the default URL reaches it. On an iPhone, set Settings to your Mac's address, e.g. `http://192.168.1.20:8765`, and allow local network access when asked.
+Then set Settings to `http://localhost:8765` (simulator) or your Mac's address, e.g. `http://192.168.1.20:8765` (iPhone, allow local network access when asked), with token `stub-token`.
 
 ## Development
 
@@ -60,7 +63,7 @@ Run the unit and UI tests on a simulator:
 
 ```sh
 xcodebuild test -project LidarScanner.xcodeproj -scheme LidarScanner \
-  -destination 'platform=iOS Simulator,name=iPhone 16 Pro'
+  -destination 'platform=iOS Simulator,name=iPhone 17 Pro'
 ```
 
-Start `python3 scripts/print_stub.py` first: the Print UI test sends a scan to it. The simulator has no LiDAR, so the UI tests cover navigation, the unsupported-device screens, the scan library and printing. They use the launch arguments in `LidarScanner/App/LaunchArguments.swift` to reset and seed sample scans. Scanning itself has to be tried on a device.
+Start `python3 scripts/print_stub.py --token stub-token` first: the Print UI tests send to it. To also test against the live server, add `TEST_RUNNER_PRINT_LIVE_URL=<server> TEST_RUNNER_PRINT_LIVE_TOKEN=<token>` before `xcodebuild`. The simulator has no LiDAR, so the UI tests cover navigation, the unsupported-device screens, the scan library and printing. They use the launch arguments in `LidarScanner/App/LaunchArguments.swift` to reset and seed sample scans. Scanning itself has to be tried on a device.

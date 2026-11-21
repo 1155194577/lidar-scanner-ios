@@ -16,6 +16,14 @@ enum DeviceSupport {
             && PhotogrammetrySession.isSupported
     }
 
+    /// Photo Print measures height from LiDAR depth.
+    @MainActor
+    static var photoPrint: Bool {
+        LaunchArguments.contains(LaunchArguments.fakePhotoCapture)
+            || (!LaunchArguments.contains(LaunchArguments.forceUnsupported)
+                && ARWorldTrackingConfiguration.supportsFrameSemantics(.sceneDepth))
+    }
+
     static var hasLiDAR: Bool {
         ARWorldTrackingConfiguration.supportsSceneReconstruction(.mesh)
     }
