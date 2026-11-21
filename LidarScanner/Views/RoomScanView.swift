@@ -50,14 +50,23 @@ struct RoomScanView: View {
                 .padding()
                 .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 12))
         case .processed:
-            Button {
-                save()
-            } label: {
-                Label("Save Scan", systemImage: "square.and.arrow.down")
-                    .frame(maxWidth: .infinity)
+            VStack(spacing: 12) {
+                if let saveError = controller.saveError {
+                    Text(saveError)
+                        .font(.footnote)
+                        .multilineTextAlignment(.center)
+                        .padding(10)
+                        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 12))
+                }
+                Button {
+                    save()
+                } label: {
+                    Label("Save Scan", systemImage: "square.and.arrow.down")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.large)
             }
-            .buttonStyle(.borderedProminent)
-            .controlSize(.large)
         case .saved(let url):
             HStack {
                 Button("View in 3D") { savedURL = url }
@@ -104,6 +113,7 @@ final class RoomScanController: NSObject, ObservableObject, @preconcurrency Room
     }
 
     @Published private(set) var phase: Phase = .idle
+    @Published private(set) var saveError: String?
     let captureView: RoomCaptureView
     private var capturedRoom: CapturedRoom?
 
@@ -121,6 +131,7 @@ final class RoomScanController: NSObject, ObservableObject, @preconcurrency Room
 
     func start() {
         capturedRoom = nil
+        saveError = nil
         captureView.captureSession.run(configuration: RoomCaptureSession.Configuration())
         phase = .scanning
     }
@@ -139,9 +150,11 @@ final class RoomScanController: NSObject, ObservableObject, @preconcurrency Room
         guard let capturedRoom else { return }
         do {
             try capturedRoom.export(to: url, exportOptions: .parametric)
+            saveError = nil
             phase = .saved(url)
         } catch {
-            phase = .failed("Couldn't save the scan: \(error.localizedDescription)")
+            try? FileManager.default.removeItem(at: url)
+            saveError = "Couldn't save the scan: \(error.localizedDescription)"
         }
     }
 
@@ -151,7 +164,7 @@ final class RoomScanController: NSObject, ObservableObject, @preconcurrency Room
 
     nonisolated func captureView(didPresent processedResult: CapturedRoom, error: Error?) {
         Task { @MainActor in
-            guard self.phase == .processing else { return }
+            guard self.phase == .scanning || self.phase == .processing else { return }
             if let error {
                 self.phase = .failed("Scanning failed: \(error.localizedDescription)")
             } else {
