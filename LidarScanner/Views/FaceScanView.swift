@@ -52,9 +52,7 @@ struct FaceScanView: View {
                 }
             }
             .sheet(item: $model.printedModel) { printed in
-                ActivityView(items: [printed.url]) { model.printedModel = nil }
-                    .presentationDetents([.medium, .large])
-                    .ignoresSafeArea()
+                PrintResultView(model: printed)
             }
             .alert("Couldn't print face", isPresented: Binding(get: { model.errorMessage != nil }, set: { if !$0 { model.errorMessage = nil } })) {
                 Button("OK", role: .cancel) {}
@@ -147,7 +145,7 @@ final class FaceScanModel: ObservableObject {
             do {
                 let url = try await PrintService().requestSTL(for: .face(capture), name: Self.fileName())
                 try Task.checkCancellation()
-                printedModel = PrintedModel(url: url)
+                printedModel = PrintedModel(url: url, kind: .face)
             } catch is CancellationError {
             } catch let error as URLError where error.code == .cancelled {
             } catch {

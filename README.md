@@ -36,7 +36,7 @@ Apps signed with a free Personal Team expire after 7 days; reconnect the phone a
 
 ## Printing a scan
 
-Tap the printer icon on a scan in **My Scans**. The app uploads the scan's mesh to the print server and opens the STL it returns in the share sheet, so you can send it to a slicer app (or *Save to Files*).
+Tap the printer icon on a scan in **My Scans**. When the print server returns an STL, tap **Save to Scan** to keep it with the original scan or **Share STL** to send it to a slicer app (or *Save to Files*). Tap the scan to find and share its saved STL later. Saving another print for that scan replaces the previous STL. For **Photo Print**, **Save to My Scans** adds a separate entry under **Photo Prints**.
 
 Set the server and token in **Settings** (gear icon on the home screen). The default server is `https://slesvci--3d-print-web.us-east.modal.run`, set by `PRINT_BASE_URL` in `project.yml`; the token (`PRINT_API_TOKEN`) is kept in the Keychain. The app calls:
 
