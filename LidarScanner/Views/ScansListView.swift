@@ -4,13 +4,11 @@ import UIKit
 
 struct ScansListView: View {
     @EnvironmentObject private var store: ScanStore
-    @State private var selectedScan: ScanFile?
+    @EnvironmentObject private var printJobs: PrintJobManager
+    @State private var previewURL: URL?
     @State private var error: (title: String, message: String)?
     @State private var pendingExport: ScanFile?
     @State private var stlFile: STLFile?
-    @State private var printingScan: ScanFile?
-    @State private var printTask: Task<Void, Never>?
-    @State private var printedModel: PrintedModel?
 
     var body: some View {
         Group {
@@ -18,7 +16,7 @@ struct ScansListView: View {
                 ContentUnavailableView(
                     "No Scans Yet",
                     systemImage: "cube.transparent",
-                    description: Text("Room scans, object scans, and photo prints you save appear here.")
+                    description: Text("Room scans, object scans, and photo and face prints you save appear here.")
                 )
                 .accessibilityIdentifier("emptyScans")
             } else {
@@ -26,7 +24,7 @@ struct ScansListView: View {
                     ForEach(ScanKind.allCases) { kind in
                         let scans = store.scans(of: kind)
                         if !scans.isEmpty {
-                            Section(kind == .photo ? "Photo Prints" : "\(kind.rawValue) Scans") {
+                            Section(kind.isStandalonePrint ? "\(kind.rawValue)s" : "\(kind.rawValue) Scans") {
                                 ForEach(scans) { scan in
                                     row(for: scan)
                                 }
@@ -39,12 +37,7 @@ struct ScansListView: View {
                 }
             }
         }
-        .disabled(printingScan != nil || pendingExport != nil)
-        .overlay {
-            if let scan = printingScan {
-                PrintProgressView(scanName: scan.name) { cancelPrint() }
-            }
-        }
+        .disabled(pendingExport != nil)
         .navigationTitle("My Scans")
         .onAppear(perform: store.reload)
         .navigationDestination(item: $selectedScan) { scan in
@@ -65,9 +58,6 @@ struct ScansListView: View {
         }
         .sheet(item: $stlFile) { file in
             STLDocumentPicker(file: file) { stlFile = nil }
-        }
-        .sheet(item: $printedModel) { model in
-            PrintResultView(model: model)
         }
         .alert(error?.title ?? "", isPresented: Binding(get: { error != nil }, set: { if !$0 { error = nil } })) {
             Button("OK", role: .cancel) {}
@@ -98,7 +88,7 @@ struct ScansListView: View {
             .buttonStyle(.plain)
             .accessibilityIdentifier("scan-\(scan.name)")
 
-            if scan.kind != .photo {
+            if !scan.kind.isStandalonePrint {
                 Button {
                     startPrint(scan)
                 } label: {
@@ -150,25 +140,7 @@ struct ScansListView: View {
     }
 
     private func startPrint(_ scan: ScanFile) {
-        printingScan = scan
-        printTask = Task {
-            do {
-                let service = try PrintService()
-                let url = try await service.requestSTL(for: .mesh(scan.url), name: scan.name)
-                try Task.checkCancellation()
-                printedModel = PrintedModel(url: url, sourceScan: scan)
-            } catch is CancellationError {
-            } catch let error as URLError where error.code == .cancelled {
-            } catch {
-                self.error = ("Couldn't print scan", error.localizedDescription)
-            }
-            printingScan = nil
-            printTask = nil
-        }
-    }
-
-    private func cancelPrint() {
-        printTask?.cancel()
+        printJobs.start(input: .mesh(scan.url), name: scan.name, kind: "scan")
     }
 
     private func delete(_ scans: [ScanFile]) {
@@ -188,7 +160,7 @@ private struct ScanDetailView: View {
 
     var body: some View {
         List {
-            if scan.kind != .photo {
+            if !scan.kind.isStandalonePrint {
                 Section("Source Scan") {
                     Button {
                         previewURL = scan.url
@@ -241,29 +213,5 @@ private struct STLDocumentPicker: UIViewControllerRepresentable {
         func documentPickerWasCancelled(_ controller: UIDocumentPickerViewController) {
             onDismiss()
         }
-    }
-}
-
-private struct PrintProgressView: View {
-    let scanName: String
-    let onCancel: () -> Void
-
-    var body: some View {
-        VStack(spacing: 16) {
-            ProgressView()
-                .controlSize(.large)
-            Text("Preparing STL for printing")
-                .font(.headline)
-            Text(scanName)
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-            Button("Cancel", role: .cancel, action: onCancel)
-                .buttonStyle(.bordered)
-                .accessibilityIdentifier("cancelPrintButton")
-        }
-        .padding(24)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16))
-        .accessibilityElement(children: .contain)
-        .accessibilityIdentifier("printProgress")
     }
 }

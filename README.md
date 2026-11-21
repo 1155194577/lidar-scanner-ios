@@ -35,7 +35,10 @@ Apps signed with a free Personal Team expire after 7 days; reconnect the phone a
 
 ## Printing a scan
 
-Tap the printer icon on a scan in **My Scans**. When the print server returns an STL, tap **Save to Scan** to keep it with the original scan or **Share STL** to send it to a slicer app (or *Save to Files*). Tap the scan to find and share its saved STL later. Saving another print for that scan replaces the previous STL. For **Photo Print**, **Save to My Scans** adds a separate entry under **Photo Prints**.
+Tap the printer icon on a scan in **My Scans**, or **Take Photo & Print** in Photo Print.
+Printing runs as an app-wide job: you can close the photo screen, return Home, or start a
+Room/Object scan while it works. A compact banner follows you across screens. Tap
+**STL ready — Share** when finished to send the file to a slicer or *Save to Files*.
 
 Set the server and token in **Settings** (gear icon on the home screen). The default server is `https://slesvci--3d-print-web.us-east.modal.run`, set by `PRINT_BASE_URL` in `project.yml`; the token (`PRINT_API_TOKEN`) is kept in the Keychain. The app calls:
 
@@ -62,6 +65,13 @@ For offline development, run the stub, which answers every valid request with a 
 ```sh
 python3 scripts/print_stub.py --token stub-token   # listens on port 8765
 ```
+
+The stub streams stages over `--delay` seconds (default 12), flushing a heartbeat at least
+every 2 seconds, and still supports legacy STL clients. Use `--fail-stage repair` for a
+mid-stream error, or set the app's server URL to `http://127.0.0.1:8765/fail` to exercise
+failure/Retry UI against the same stub instance. No second stub is required by the UI tests.
+It keeps jobs in memory, supports replay/result routes and idempotent submissions, and
+continues processing after a client disconnects. Restarting it clears its jobs.
 
 Then set Settings to `http://localhost:8765` (simulator) or your Mac's address, e.g. `http://192.168.1.20:8765` (iPhone, allow local network access when asked), with token `stub-token`.
 

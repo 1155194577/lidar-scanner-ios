@@ -6,6 +6,7 @@ struct ObjectScanView: View {
     @Environment(\.dismiss) private var dismiss
     @StateObject private var model = ObjectScanModel()
     @State private var previewURL: URL?
+    @State private var showsGuide = false
 
     var body: some View {
         ZStack {
@@ -33,6 +34,7 @@ struct ObjectScanView: View {
             if case .done = phase { store.reload() }
         }
         .quickLookPreview($previewURL)
+        .sheet(isPresented: $showsGuide) { ObjectScanGuideView() }
     }
 
     private var topBar: some View {
@@ -43,6 +45,10 @@ struct ObjectScanView: View {
             }
             .buttonStyle(.bordered)
             Spacer()
+            Button { showsGuide = true } label: {
+                Label("How to scan", systemImage: "questionmark.circle")
+            }
+            .buttonStyle(.bordered)
         }
         .padding()
     }
@@ -76,9 +82,12 @@ struct ObjectScanView: View {
 
 private struct CaptureControls: View {
     let session: ObjectCaptureSession
+    @State private var pass = 1
+    @State private var confirmsEarlyFinish = false
 
     var body: some View {
         VStack(spacing: 12) {
+            Text(stepHeader).font(.headline)
             if let hint {
                 Text(hint)
                     .font(.footnote)
@@ -94,15 +103,23 @@ private struct CaptureControls: View {
                     primaryButton("Start Capture") { session.startCapturing() }
                 case .capturing:
                     if session.userCompletedScanPass {
-                        if !session.feedback.contains(.objectNotFlippable) {
-                            Button("Flip Object") { session.beginNewScanPassAfterFlip() }
+                        if pass < 3 {
+                            primaryButton(pass == 1 ? "Pass 2 · Lower angle" : "Pass 3 · High angle") {
+                                session.beginNewScanPass()
+                                pass += 1
+                            }
+                            if pass == 2 && !session.feedback.contains(.objectNotFlippable) {
+                                Button("Pass 3 · Flip object") {
+                                    session.beginNewScanPassAfterFlip()
+                                    pass += 1
+                                }
+                                .buttonStyle(.borderedProminent)
+                            }
+                            Button("Finish") { confirmsEarlyFinish = true }
                                 .buttonStyle(.bordered)
-                                .controlSize(.large)
+                        } else {
+                            primaryButton("Finish") { session.finish() }
                         }
-                        Button("Another Pass") { session.beginNewScanPass() }
-                            .buttonStyle(.bordered)
-                            .controlSize(.large)
-                        primaryButton("Finish") { session.finish() }
                     } else {
                         Text("\(session.numberOfShotsTaken) / \(session.maximumNumberOfInputImages) photos")
                             .font(.footnote.monospacedDigit())
@@ -110,7 +127,7 @@ private struct CaptureControls: View {
                             .background(.thinMaterial, in: Capsule())
                         Spacer()
                         if session.numberOfShotsTaken >= 20 {
-                            Button("Finish Early") { session.finish() }
+                            Button("Finish Early") { confirmsEarlyFinish = true }
                                 .buttonStyle(.bordered)
                         }
                     }
@@ -121,16 +138,31 @@ private struct CaptureControls: View {
                 }
             }
         }
+        .padding(12)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16))
+        .alert("Finish with fewer photos?", isPresented: $confirmsEarlyFinish) {
+            Button("Keep Scanning", role: .cancel) {}
+            Button("Finish Anyway") { session.finish() }
+        } message: {
+            Text("Fewer photos and angles can give a worse model with missing surfaces. Complete all three passes for better results.")
+        }
+    }
+
+    private var stepHeader: String {
+        switch session.state {
+        case .ready, .detecting: return "Step 1 of 3 · Fit the box"
+        case .capturing: return "Step 2 of 3 · Capture pass \(pass) of 3"
+        default: return "Step 3 · Finish"
+        }
     }
 
     private var hint: String? {
+        if let feedback = ObjectScanCoaching.feedbackMessage(session.feedback) { return feedback }
         switch session.state {
         case .ready: return "Place the object on a plain surface with space to walk around it."
         case .detecting: return "Fit the box around the object, then start capturing."
         case .capturing:
-            return session.userCompletedScanPass
-                ? "Pass complete. Flip the object for a new pass, circle it again from a lower angle, or finish."
-                : "Walk slowly around the object, keeping it in the frame."
+            return ObjectScanCoaching.instruction(pass: pass, completed: session.userCompletedScanPass)
         default: return nil
         }
     }
@@ -186,6 +218,7 @@ final class ObjectScanModel: ObservableObject {
         self.outputURL = outputURL
 
         var configuration = ObjectCaptureSession.Configuration()
+        configuration.isOverCaptureEnabled = true
         configuration.checkpointDirectory = checkpoints
         let session = ObjectCaptureSession()
         session.start(imagesDirectory: images, configuration: configuration)
@@ -231,6 +264,9 @@ final class ObjectScanModel: ObservableObject {
         phase = .reconstructing(0)
         let images = workspace.appendingPathComponent("Images", isDirectory: true)
         var configuration = PhotogrammetrySession.Configuration()
+        configuration.sampleOrdering = .sequential
+        configuration.featureSensitivity = .high
+        configuration.isObjectMaskingEnabled = true
         configuration.checkpointDirectory = workspace.appendingPathComponent("Checkpoints", isDirectory: true)
 
         tasks.append(Task { [weak self] in

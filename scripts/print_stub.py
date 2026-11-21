@@ -19,16 +19,55 @@ live check it flags `steep_angle` when the camera looks more than 30 degrees bel
     python3 scripts/print_stub.py --port 9000 --delay 2 --token secret
 """
 import argparse
+import base64
 import email.parser
 import email.policy
 import json
 import math
 import time
+import threading
+import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 MESH_EXTENSIONS = (".obj", ".ply", ".usdz")
 PHOTO_EXTENSIONS = (".jpg", ".jpeg", ".png")
 MAX_UPLOAD_BYTES = 200 * 1024 * 1024
+
+
+class Job:
+    def __init__(self, job_id, stem, delay, fail_stage):
+        self.id = job_id
+        self.stem = stem
+        self.condition = threading.Condition()
+        self.events = []
+        self.terminal = None
+        self.report = {"extents_mm": [20.0, 20.0, 20.0], "watertight": True, "volume_cm3": 8.0}
+        threading.Thread(target=self.run, args=(delay, fail_stage), daemon=True).start()
+
+    def emit(self, event):
+        with self.condition:
+            self.events.append(event)
+            if event["type"] in ("done", "error"):
+                self.terminal = event
+            self.condition.notify_all()
+
+    def run(self, delay, fail_stage):
+        stages = ["upload", "background removal", "TripoSR", "depth fusion", "repair", "export"]
+        for index, stage in enumerate(stages):
+            event = {"type": "progress", "stage": stage, "message": "Processing: " + stage,
+                     "progress": index / len(stages)}
+            self.emit(event)
+            remaining = max(0, delay) / len(stages)
+            while remaining > 0:
+                interval = min(2, remaining)
+                time.sleep(interval)
+                remaining -= interval
+                self.emit(event)
+            if stage == fail_stage:
+                self.emit({"type": "error", "detail": "Stub failed during " + stage})
+                return
+        self.emit({"type": "done", "filename": self.stem + ".stl", "report": self.report,
+                   "stl_base64": base64.b64encode(cube_stl()).decode()})
 
 
 def cube_stl(size_mm=20.0):
@@ -122,8 +161,9 @@ def photo_check(parts):
 
 
 class Handler(BaseHTTPRequestHandler):
-    delay = 0.0
+    delay = 12.0
     token = None
+    fail_stage = None
     timeout = 60
     last_request = {}
 
@@ -139,9 +179,34 @@ class Handler(BaseHTTPRequestHandler):
         path = self.path.rstrip("/")
         if path not in ("/print", "/photo-check"):
             return self.error(404, "not found")
+        with self.jobs_lock:
+            job = self.jobs.get(path[1])
+        if job is None:
+            return self.error(404, "unknown or expired print job")
+        if len(path) == 3:
+            if path[2] != "result":
+                return self.error(404, "not found")
+            with job.condition:
+                while job.terminal is None:
+                    job.condition.wait()
+                terminal = job.terminal
+            if terminal["type"] == "error":
+                return self.error(500, terminal["detail"])
+            return self.reply(200, "model/stl", cube_stl(), {"X-Print-Report": json.dumps(job.report)})
+        self.stream(job)
+
+    def authorized(self):
         if self.token and self.headers.get("Authorization") != "Bearer " + self.token:
             self.close_connection = True
-            return self.error(401, "missing or invalid token")
+            self.error(401, "missing or invalid token")
+            return False
+        return True
+
+    def do_POST(self):
+        if self.path.rstrip("/") not in ("/print", "/fail/print"):
+            return self.error(404, "not found")
+        if not self.authorized():
+            return
         content_type = self.headers.get("Content-Type", "")
         if not content_type.startswith("multipart/form-data"):
             return self.error(400, "expected multipart/form-data")
@@ -203,14 +268,32 @@ class Handler(BaseHTTPRequestHandler):
                     return self.error(422, str(error))
                 source += ", depth %(depth_width)dx%(depth_height)d" % summary
             stem = "photo"
+            summary = {}
+            if parts.get("mode", (None, b"object"))[1].decode() == "face":
+                try:
+                    summary = check_face(parts)
+                except ValueError as error:
+                    return self.error(422, str(error))
+                source = source.replace("photo", "face photo", 1)
+                if "depth_width" in summary:
+                    source += ", depth %(depth_width)dx%(depth_height)d" % summary
+                stem = "face"
 
         Handler.last_request = {"fields": sorted(parts), "source": source}
         if "photo" in parts:
             Handler.last_request.update(summary)
 
         self.log_message("print request: %s", source)
-        time.sleep(self.delay)
         report = {"extents_mm": [20.0, 20.0, 20.0], "watertight": True, "volume_cm3": 8.0}
+        if "application/x-ndjson" in self.headers.get("Accept", ""):
+            job_id = parts.get("job_id", (None, b""))[1].decode() or str(uuid.uuid4())
+            fail_stage = self.fail_stage or ("repair" if self.path.startswith("/fail/") else None)
+            with self.jobs_lock:
+                if job_id not in self.jobs:
+                    self.jobs[job_id] = Job(job_id, stem, self.delay, fail_stage)
+                job = self.jobs[job_id]
+            return self.stream(job)
+        time.sleep(self.delay)
         self.reply(200, "model/stl", cube_stl(), {
             "Content-Disposition": 'attachment; filename="%s.stl"' % stem,
             "X-Print-Report": json.dumps(report),
@@ -218,6 +301,33 @@ class Handler(BaseHTTPRequestHandler):
 
     def error(self, status, detail):
         self.reply(status, "application/json", json.dumps({"detail": detail}).encode())
+
+    def line(self, event):
+        self.wfile.write((json.dumps(event) + "\n").encode())
+        self.wfile.flush()
+
+    def stream(self, job):
+        self.send_response(200)
+        self.send_header("Content-Type", "application/x-ndjson")
+        self.send_header("Connection", "close")
+        self.end_headers()
+        self.close_connection = True
+        try:
+            self.line({"type": "accepted", "job_id": job.id})
+            with job.condition:
+                cursor = max(0, len(job.events) - 1)
+            while True:
+                with job.condition:
+                    while len(job.events) <= cursor:
+                        job.condition.wait(timeout=2)
+                    events = job.events[cursor:]
+                    cursor = len(job.events)
+                for event in events:
+                    self.line(event)
+                    if event["type"] in ("done", "error"):
+                        return
+        except (BrokenPipeError, ConnectionResetError):
+            pass
 
     def reply(self, status, content_type, body, headers=None):
         self.send_response(status)
@@ -233,11 +343,13 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--host", default="0.0.0.0")
     parser.add_argument("--port", type=int, default=8765)
-    parser.add_argument("--delay", type=float, default=0.0, help="seconds to wait before answering")
+    parser.add_argument("--delay", type=float, default=12.0, help="total processing seconds; streams heartbeats at least every 2 seconds")
+    parser.add_argument("--fail-stage", help="emit a terminal error at this stage (or use /fail as the base URL)")
     parser.add_argument("--token", help="require Authorization: Bearer <token>")
     args = parser.parse_args()
     Handler.delay = args.delay
     Handler.token = args.token
+    Handler.fail_stage = args.fail_stage
     server = ThreadingHTTPServer((args.host, args.port), Handler)
     print("Print stub listening on http://%s:%d/print" % (args.host, args.port), flush=True)
     server.serve_forever()

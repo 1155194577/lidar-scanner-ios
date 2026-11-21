@@ -4,14 +4,19 @@ enum ScanKind: String, CaseIterable {
     case room = "Room"
     case object = "Object"
     case photo = "Photo Print"
+    case face = "Face Print"
 
     var systemImage: String {
         switch self {
         case .room: return "house"
         case .object: return "cube"
         case .photo: return "camera.viewfinder"
+        case .face: return "face.smiling"
         }
     }
+
+    /// Prints made straight from the camera, saved as STLs without a source scan.
+    var isStandalonePrint: Bool { self == .photo || self == .face }
 }
 
 struct ScanFile: Identifiable, Hashable {
@@ -32,8 +37,8 @@ final class ScanStore: ObservableObject {
 
     let directory: URL
     private let fileManager: FileManager
-    private var photoPrintDirectory: URL {
-        directory.appendingPathComponent("Photo Prints", isDirectory: true)
+    private func printDirectory(for kind: ScanKind) -> URL {
+        directory.appendingPathComponent("\(kind.rawValue)s", isDirectory: true)
     }
 
     init(directory: URL? = nil, fileManager: FileManager = .default) {
@@ -52,11 +57,13 @@ final class ScanStore: ObservableObject {
             return Self.scanFile(at: url, kind: Self.kind(forFileName: url.lastPathComponent),
                                  printedSTLURL: fileManager.fileExists(atPath: stl.path) ? stl : nil)
         }
-        let photoURLs = (try? fileManager.contentsOfDirectory(at: photoPrintDirectory, includingPropertiesForKeys: keys, options: [.skipsHiddenFiles])) ?? []
-        let photos = photoURLs.filter { $0.pathExtension.lowercased() == "stl" }.map {
-            Self.scanFile(at: $0, kind: .photo, printedSTLURL: $0)
+        let prints = ScanKind.allCases.filter(\.isStandalonePrint).flatMap { kind in
+            let printURLs = (try? fileManager.contentsOfDirectory(at: printDirectory(for: kind), includingPropertiesForKeys: keys, options: [.skipsHiddenFiles])) ?? []
+            return printURLs.filter { $0.pathExtension.lowercased() == "stl" }.map {
+                Self.scanFile(at: $0, kind: kind, printedSTLURL: $0)
+            }
         }
-        scans = (meshes + photos).sorted { $0.createdAt > $1.createdAt }
+        scans = (meshes + prints).sorted { $0.createdAt > $1.createdAt }
     }
 
     func scans(of kind: ScanKind) -> [ScanFile] {
@@ -71,7 +78,7 @@ final class ScanStore: ObservableObject {
     }
 
     func savePrintedSTL(_ source: URL, for scan: ScanFile) throws {
-        guard scans.contains(where: { $0.id == scan.id && $0.kind != .photo }),
+        guard scans.contains(where: { $0.id == scan.id && !$0.kind.isStandalonePrint }),
               fileManager.fileExists(atPath: scan.url.path) else {
             throw CocoaError(.fileNoSuchFile)
         }
@@ -80,9 +87,11 @@ final class ScanStore: ObservableObject {
         reload()
     }
 
-    func savePhotoPrint(_ source: URL) throws {
-        try fileManager.createDirectory(at: photoPrintDirectory, withIntermediateDirectories: true)
-        let destination = uniqueURL(in: photoPrintDirectory, name: source.deletingPathExtension().lastPathComponent, extension: "stl")
+    func savePrint(_ source: URL, kind: ScanKind) throws {
+        precondition(kind.isStandalonePrint)
+        let folder = printDirectory(for: kind)
+        try fileManager.createDirectory(at: folder, withIntermediateDirectories: true)
+        let destination = uniqueURL(in: folder, name: source.deletingPathExtension().lastPathComponent, extension: "stl")
         try Data(contentsOf: source, options: .mappedIfSafe).write(to: destination, options: .atomic)
         reload()
     }
@@ -110,7 +119,7 @@ final class ScanStore: ObservableObject {
     }
 
     private func removeFiles(for scan: ScanFile) throws {
-        if scan.kind != .photo {
+        if !scan.kind.isStandalonePrint {
             let stl = Self.sidecarURL(for: scan.url)
             if fileManager.fileExists(atPath: stl.path) {
                 try fileManager.removeItem(at: stl)

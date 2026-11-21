@@ -5,6 +5,7 @@ import SwiftUI
 /// Single-photo print: measure the object's height with LiDAR (tap its base, then its top), then send one photo plus the height to the print server.
 struct PhotoPrintView: View {
     @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject private var printJobs: PrintJobManager
     @StateObject private var model = PhotoPrintModel(fake: LaunchArguments.contains(LaunchArguments.fakePhotoCapture))
 
     var body: some View {
@@ -60,9 +61,11 @@ struct PhotoPrintView: View {
                 Text((model.photoIssues ?? []).map(\.message).joined(separator: "\n"))
             }
             .alert("Couldn't print photo", isPresented: Binding(get: { model.errorMessage != nil }, set: { if !$0 { model.errorMessage = nil } })) {
-                Button("OK", role: .cancel) {}
+                Button("Retry") { model.print(using: printJobs) }
+                Button("Dismiss", role: .cancel) {}
             } message: {
                 Text(model.errorMessage ?? "")
+                    .accessibilityIdentifier("printError")
             }
         }
     }
@@ -83,13 +86,13 @@ struct PhotoPrintView: View {
                     .controlSize(.large)
                     .disabled(model.isFake || model.base == nil)
                 Button {
-                    model.print()
+                    model.print(using: printJobs)
                 } label: {
                     Label("Take Photo & Print", systemImage: "printer")
                 }
                 .buttonStyle(.borderedProminent)
                 .controlSize(.large)
-                .disabled(model.heightMM == nil || model.isPrinting)
+                .disabled(model.heightMM == nil)
                 .accessibilityIdentifier("takePhotoAndPrintButton")
             }
         }
@@ -99,6 +102,7 @@ struct PhotoPrintView: View {
 struct PrintedModel: Identifiable {
     let url: URL
     var sourceScan: ScanFile? = nil
+    var kind: ScanKind = .photo
     var id: URL { url }
 }
 
@@ -158,7 +162,7 @@ struct PrintResultView: View {
             if let scan = model.sourceScan {
                 try store.savePrintedSTL(model.url, for: scan)
             } else {
-                try store.savePhotoPrint(model.url)
+                try store.savePrint(model.url, kind: model.kind)
             }
             isSaved = true
         } catch {
@@ -171,8 +175,6 @@ struct PrintResultView: View {
 final class PhotoPrintModel: ObservableObject {
     @Published private(set) var base: SIMD3<Float>?
     @Published private(set) var top: SIMD3<Float>?
-    @Published private(set) var isPrinting = false
-    @Published var printedModel: PrintedModel?
     @Published var errorMessage: String?
     /// What `/photo-check` flagged about the last shot; the user retakes or prints anyway.
     @Published var photoIssues: [PhotoCheck.Issue]?
@@ -206,7 +208,7 @@ final class PhotoPrintModel: ObservableObject {
     }
 
     func handleTap(at point: CGPoint) {
-        guard let arView, !isPrinting,
+        guard let arView,
               let hit = arView.raycast(from: point, allowing: .estimatedPlane, alignment: .any).first else { return }
         let position = SIMD3<Float>(hit.worldTransform.columns.3.x, hit.worldTransform.columns.3.y, hit.worldTransform.columns.3.z)
         if base == nil || top != nil {
