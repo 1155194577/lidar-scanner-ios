@@ -200,8 +200,8 @@ final class PrintJobManager: ObservableObject {
                 }
                 return
             }
-            dismiss(job)
             start(payload: payload, input: input, name: job.name, kind: job.kind, sourceScanFileName: job.sourceScanFileName)
+            dismiss(job)
             return
         }
         guard let index = jobs.firstIndex(where: { $0.id == job.id }) else { return }
