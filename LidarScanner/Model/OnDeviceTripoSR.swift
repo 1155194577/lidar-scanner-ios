@@ -184,7 +184,7 @@ final class OnDeviceModelStore: ObservableObject {
             do {
                 try await install()
                 state = .ready
-            } catch is CancellationError {
+            } catch where error is CancellationError || (error as? URLError)?.code == .cancelled {
                 state = Self.isInstalled ? .ready : .missing
             } catch {
                 state = .failed(error.localizedDescription)
