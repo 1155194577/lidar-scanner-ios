@@ -209,7 +209,7 @@ final class LidarScannerUITests: XCTestCase {
         XCTAssertTrue(printButton.waitForExistence(timeout: 5))
         let scanName = String(printButton.identifier.dropFirst("print-".count))
         printButton.tap()
-        assertShareSheet(in: app, captionPrefix: scanName, errorAlert: "Couldn't print scan", timeout: 240)
+        assertShareSheet(in: app, captionPrefix: scanName, errorAlert: "Couldn't print scan", timeout: 360)
         attachScreenshot(app, name: "live-scan-stl")
         app.otherElements["ActivityListView"].buttons["header.closeButton"].firstMatch.tapIfExists()
         app.swipeDown(velocity: .fast)
@@ -218,7 +218,7 @@ final class LidarScannerUITests: XCTestCase {
         app.buttons["photoPrintButton"].tap()
         XCTAssertTrue(app.staticTexts["photoHeight"].waitForExistence(timeout: 5))
         app.buttons["takePhotoAndPrintButton"].tap()
-        assertShareSheet(in: app, captionPrefix: "Photo ", errorAlert: "Couldn't print photo", timeout: 240)
+        assertShareSheet(in: app, captionPrefix: "Photo ", errorAlert: "Couldn't print photo", timeout: 360)
         attachScreenshot(app, name: "live-photo-stl")
     }
 

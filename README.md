@@ -51,7 +51,7 @@ POST {server}/print   multipart/form-data, Authorization: Bearer <token>
 → 200 model/stl  (X-Print-Report header); errors are JSON {"detail"}
 ```
 
-A cold start of the live server takes about 2 minutes, so the first print can be slow.
+A cold start of the live server can take about 4 minutes, so the first print can be slow; the app waits up to 10 minutes per request.
 
 For offline development, run the stub, which answers every valid request with a 20 mm cube:
 
