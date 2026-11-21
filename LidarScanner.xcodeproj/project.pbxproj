@@ -22,6 +22,7 @@
 		74F3DA10CEEDBA6012D63E72 /* STLExporter.swift in Sources */ = {isa = PBXBuildFile; fileRef = B758C4696E00787E91415462 /* STLExporter.swift */; };
 		7DE70F0DC44AE8C71A244F94 /* STLExporterTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DAF2A85F7D7E839B808E7602 /* STLExporterTests.swift */; };
 		85464DBFEC850BAD6CEABBAA /* SampleCube.usdz in Resources */ = {isa = PBXBuildFile; fileRef = 847C4A0C1369226AF4808EE4 /* SampleCube.usdz */; };
+		8667ED2BDD60E0D6F87B2D73 /* PhotoPrintTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5C087DF6219678C4951C8740 /* PhotoPrintTests.swift */; };
 		8798B9B3B8ED9FD73CE5F592 /* ActivityView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C8407C2985E2FFF7986A9BC4 /* ActivityView.swift */; };
 		96506DE04905D6C3933F26AA /* PhotoPrintView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4030F8493820551CA06FD224 /* PhotoPrintView.swift */; };
 		ED9CBD58831D55A87F79AA4F /* ExportSample.usdz in Resources */ = {isa = PBXBuildFile; fileRef = FFCD04E0C144E654C31E0E6A /* ExportSample.usdz */; };
@@ -58,6 +59,7 @@
 		4ADE67AD7F6A66051B9B8B61 /* KeychainStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeychainStore.swift; sourceTree = "<group>"; };
 		54FB452B361CBD769754AC19 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		5AEE1F5D3FC4825BDA978F4C /* ScanStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScanStore.swift; sourceTree = "<group>"; };
+		5C087DF6219678C4951C8740 /* PhotoPrintTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhotoPrintTests.swift; sourceTree = "<group>"; };
 		847C4A0C1369226AF4808EE4 /* SampleCube.usdz */ = {isa = PBXFileReference; lastKnownFileType = file.usdz; path = SampleCube.usdz; sourceTree = "<group>"; };
 		87F0A168FB8895BC010B38B4 /* ScanStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScanStoreTests.swift; sourceTree = "<group>"; };
 		943C6B93CDBEF4C325CA7E88 /* LidarScannerApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LidarScannerApp.swift; sourceTree = "<group>"; };
@@ -88,6 +90,7 @@
 		3AC6393B0E4041EA810A8E81 /* LidarScannerTests */ = {
 			isa = PBXGroup;
 			children = (
+				5C087DF6219678C4951C8740 /* PhotoPrintTests.swift */,
 				3E4B9C6E706A7F0A1044D1D6 /* PrintServiceTests.swift */,
 				87F0A168FB8895BC010B38B4 /* ScanStoreTests.swift */,
 				DAF2A85F7D7E839B808E7602 /* STLExporterTests.swift */,
@@ -346,6 +349,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				8667ED2BDD60E0D6F87B2D73 /* PhotoPrintTests.swift in Sources */,
 				F358299C9768C7B853CFBC26 /* PrintServiceTests.swift in Sources */,
 				7DE70F0DC44AE8C71A244F94 /* STLExporterTests.swift in Sources */,
 				6A57E1C78638338120EDC3CD /* ScanStoreTests.swift in Sources */,

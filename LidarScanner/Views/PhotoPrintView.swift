@@ -182,9 +182,19 @@ final class PhotoPrintModel: ObservableObject {
 
     private func capturePhoto() -> Data? {
         if isFake { return Self.sampleImage.jpegData(compressionQuality: 0.9) }
-        guard let buffer = arView?.session.currentFrame?.capturedImage else { return nil }
-        let image = CIImage(cvPixelBuffer: buffer).oriented(.right)
+        guard let arView, let buffer = arView.session.currentFrame?.capturedImage else { return nil }
+        let image = CIImage(cvPixelBuffer: buffer).oriented(Self.photoOrientation(for: arView.window?.windowScene?.interfaceOrientation ?? .portrait))
         return CIContext().jpegRepresentation(of: image, colorSpace: CGColorSpace(name: CGColorSpace.sRGB)!, options: [:])
+    }
+
+    /// The camera buffer is in the sensor's landscape-right orientation; rotate it to match what the user sees.
+    nonisolated static func photoOrientation(for interface: UIInterfaceOrientation) -> CGImagePropertyOrientation {
+        switch interface {
+        case .landscapeRight: return .up
+        case .landscapeLeft: return .down
+        case .portraitUpsideDown: return .left
+        default: return .right
+        }
     }
 
     private static func fileName() -> String {
