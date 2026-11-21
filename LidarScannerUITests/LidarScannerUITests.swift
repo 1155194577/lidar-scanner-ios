@@ -398,6 +398,17 @@ final class LidarScannerUITests: XCTestCase {
         XCTAssertEqual(received["fields"] as? [String], ["camera_transform", "depth", "depth_confidence", "depth_height", "depth_width", "height_mm", "image_orientation", "intrinsics", "job_id", "object_points", "photo"])
     }
 
+    func testPhotoPrintFallsBackToMultipartWhenStorageDeniesEveryUpload() throws {
+        try requirePrintStub()
+        try printPhoto(baseURL: Self.stubURL + "/deny")
+        let received = try lastStubRequest()
+        XCTAssertNil(received["uploaded"])
+        XCTAssertTrue((received["fields"] as? [String])?.contains("photo") ?? false, "the photo should go in the multipart POST")
+        let stats = try XCTUnwrap(received["upload_stats"] as? [String: Int])
+        XCTAssertEqual(stats["puts"], 0)
+        XCTAssertGreaterThan(stats["rejected_puts"] ?? 0, 0)
+    }
+
     private func printPhoto(baseURL: String) throws {
         let app = launch(["-UITestFakePhotoCapture", "-UITestFakePitch", "5", "-printBaseURL", baseURL, "-printAPIToken", Self.stubToken])
         app.buttons["photoPrintButton"].tap()

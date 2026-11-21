@@ -68,7 +68,7 @@ enum PrintError: LocalizedError, Equatable {
 /// returns a signed URL per file; each file is PUT there with exactly the returned headers, and `POST /print`
 /// then sends `job_id`, `uploaded=<names>` and the form fields with no file parts. A 403 PUT (expired URL) asks
 /// for a fresh URL for that file; a 409 from `/print` re-uploads the files it names. Servers without
-/// `/print/uploads` (404/405) get the single multipart POST.
+/// `/print/uploads` (404/405), and jobs whose signed uploads fail before step 3, get the single multipart POST.
 struct PrintService {
     static let baseURLKey = "printBaseURL"
     static let tokenKey = "printAPIToken"
@@ -214,7 +214,7 @@ struct PrintService {
         var conflicts = 0
         while true {
             let pending = payload.files.filter { !state.isUploaded($0.name) }
-            if !pending.isEmpty, !(try await upload(pending, jobID: jobID, state: state, onProgress: onProgress)) {
+            if !pending.isEmpty, !(try await uploadOrFallBack(pending, jobID: jobID, state: state, onProgress: onProgress)) {
                 state.legacy = true
                 return try await receive(try makeRequest(for: input, jobID: jobID), name: name, in: directory, onProgress: onProgress, onAccepted: onAccepted)
             }
@@ -249,6 +249,18 @@ struct PrintService {
             throw PrintError.unexpectedResponse("no upload URL for \(file.name)")
         }
         return plan.uploads
+    }
+
+    /// Steps 1 and 2; false when the job should use the multipart POST instead: the server has no signed uploads,
+    /// or they failed before step 3 (e.g. storage denying every PUT once the URL renewals are used up).
+    private func uploadOrFallBack(_ files: [PrintPayload.File], jobID: String, state: PrintUploadState,
+                                  onProgress: @escaping @Sendable (PrintProgress) -> Void) async throws -> Bool {
+        do {
+            return try await upload(files, jobID: jobID, state: state, onProgress: onProgress)
+        } catch {
+            if error is CancellationError || (error as? URLError)?.code == .cancelled || Task.isCancelled { throw error }
+            return false
+        }
     }
 
     /// Steps 1 and 2 for `files`; false when the server has no signed uploads.
