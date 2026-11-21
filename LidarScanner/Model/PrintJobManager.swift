@@ -573,7 +573,8 @@ final class PrintBackgroundUpload: NSObject, URLSessionDataDelegate, PrintUpload
 
     func urlSessionDidFinishEvents(forBackgroundURLSession session: URLSession) {
         DispatchQueue.main.async {
-            Task { @MainActor in PrintJobManager.shared.resumeUnaccepted() }
+            // Claims background time before iOS is told the events are handled and may suspend the app.
+            MainActor.assumeIsolated { PrintJobManager.shared.resumeUnaccepted() }
             self.completionHandler?()
             self.completionHandler = nil
         }
