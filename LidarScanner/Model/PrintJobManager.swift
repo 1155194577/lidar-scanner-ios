@@ -17,12 +17,14 @@ struct PrintJob: Identifiable, Codable {
     var error: String?
     var accepted = false
     var retryFromStart = false
+    /// The server refused the submission (a 4xx other than 404/408/429), so it holds no job to re-attach to.
+    var rejected = false
     var isFinished: Bool { result != nil || error != nil }
 }
 
 extension PrintJob {
     private enum CodingKeys: String, CodingKey {
-        case id, name, kind, baseURL, sourceScanFileName, progress, resultPath, result, error, accepted, retryFromStart
+        case id, name, kind, baseURL, sourceScanFileName, progress, resultPath, result, error, accepted, retryFromStart, rejected
     }
 
     init(from decoder: Decoder) throws {
@@ -41,6 +43,7 @@ extension PrintJob {
         error = try values.decodeIfPresent(String.self, forKey: .error)
         accepted = try values.decodeIfPresent(Bool.self, forKey: .accepted) ?? false
         retryFromStart = try values.decodeIfPresent(Bool.self, forKey: .retryFromStart) ?? false
+        rejected = try values.decodeIfPresent(Bool.self, forKey: .rejected) ?? false
         if error == PrintError.serverChanged.localizedDescription { retryFromStart = false }
     }
 
@@ -56,6 +59,7 @@ extension PrintJob {
         try values.encodeIfPresent(error, forKey: .error)
         try values.encode(accepted, forKey: .accepted)
         try values.encode(retryFromStart, forKey: .retryFromStart)
+        try values.encode(rejected, forKey: .rejected)
     }
 }
 
@@ -104,7 +108,8 @@ final class PrintJobManager: ObservableObject {
     }
 
     func canRetry(_ job: PrintJob) -> Bool {
-        !(job.retryFromStart || job.baseURL != PrintService.configuredBaseURL) || inputs[job.id] != nil
+        if job.rejected && inputs[job.id] == nil { return false }
+        return !(job.retryFromStart || job.baseURL != PrintService.configuredBaseURL) || inputs[job.id] != nil
     }
 
     func printedModel(for job: PrintJob) -> PrintedModel? {
@@ -128,9 +133,10 @@ final class PrintJobManager: ObservableObject {
         guard let index = jobs.firstIndex(where: { $0.id == job.id }) else { return }
         tokens[job.id] = currentToken()
         jobs[index].error = nil
+        jobs[index].rejected = false
         jobs[index].progress = PrintProgress(stage: "reconnecting", message: "Reconnecting to print server", progress: nil)
         persist()
-        run(jobs[index], submit: inputs[job.id] != nil)
+        run(jobs[index], submit: inputs[job.id] != nil && !jobs[index].accepted)
     }
 
     func dismiss(_ job: PrintJob) {
@@ -187,14 +193,18 @@ final class PrintJobManager: ObservableObject {
                 if Task.isCancelled { return }
             }
             var lastError: Error = PrintError.server(status: 404, message: "Lost contact with the print server")
-            for attempt in 0..<3 {
+            var resend = submit
+            var uploaded = false
+            for _ in 0..<3 {
                 do {
                     let service = try service(job)
                     let progress: @Sendable (PrintProgress) -> Void = { progress in
                         Task { @MainActor in self.update(job.id, progress: progress) }
                     }
                     let url: URL
-                    if attempt == 0, submit, let input = inputs[job.id] {
+                    let accepted = jobs.first(where: { $0.id == job.id })?.accepted ?? false
+                    uploaded = resend && !accepted && inputs[job.id] != nil
+                    if uploaded, let input = inputs[job.id] {
                         url = try await service.requestSTL(for: input, name: job.id, in: Self.directory, jobID: job.id, onProgress: progress) { _ in
                             Task { @MainActor in
                                 guard let index = self.jobs.firstIndex(where: { $0.id == job.id }) else { return }
@@ -212,6 +222,8 @@ final class PrintJobManager: ObservableObject {
                 } catch {
                     if Task.isCancelled { return }
                     lastError = error
+                    // An upload the server never answered left no job to re-attach to.
+                    resend = error is URLError && !(jobs.first(where: { $0.id == job.id })?.accepted ?? true)
                     if case PrintError.serverChanged = error { break }
                     if case PrintError.invalidBaseURL = error { break }
                     if case PrintError.jobFailed = error { break }
@@ -226,6 +238,12 @@ final class PrintJobManager: ObservableObject {
                     update(job.id, progress: PrintProgress(stage: "reconnecting", message: "Reconnecting to print server", progress: nil))
                     try? await Task.sleep(for: .seconds(1))
                 }
+            }
+            // The server refused the upload itself, so it holds no job to re-attach to.
+            if uploaded, case PrintError.server(let status, _) = lastError, (400..<500).contains(status),
+               ![404, 408, 429].contains(status), let index = jobs.firstIndex(where: { $0.id == job.id }),
+               !jobs[index].accepted {
+                jobs[index].rejected = true
             }
             if case PrintError.server(404, _) = lastError {
                 complete(id: job.id, result: .failure(PrintError.lostContact))

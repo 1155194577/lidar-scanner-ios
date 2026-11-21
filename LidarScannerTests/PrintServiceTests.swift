@@ -485,6 +485,26 @@ final class PrintServiceTests: XCTestCase {
     }
 
     @MainActor
+    func testUploadFailingBeforeAcceptanceIsResentNotReattached() async throws {
+        let suite = "PrintJobs-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite); StubProtocol.connectFailures = 0 }
+        var methods: [String] = []
+        StubProtocol.connectFailures = 1
+        StubProtocol.handler = { request in
+            methods.append(request.httpMethod ?? "")
+            if request.httpMethod == "POST" { return (200, "model/stl", Data("stl".utf8)) }
+            return (404, "application/json", Data(#"{"detail":"unknown job"}"#.utf8))
+        }
+        let manager = PrintJobManager(defaults: defaults, notifications: false, makeService: { _, _ in try self.service() })
+        manager.start(input: .photo(Data([1]), heightMM: 10), name: "Cold start", kind: "photo")
+        let ready = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in manager.jobs.first?.result != nil }, object: nil)
+        await fulfillment(of: [ready], timeout: 4)
+        XCTAssertEqual(methods, ["POST"])
+        manager.dismiss(manager.jobs[0])
+    }
+
+    @MainActor
     func testChangedServerRetryUsesNewSettingsWhenInputRemains() async throws {
         let previous = UserDefaults.standard.object(forKey: PrintService.baseURLKey)
         defer { UserDefaults.standard.set(previous, forKey: PrintService.baseURLKey) }
@@ -566,6 +586,56 @@ final class PrintServiceTests: XCTestCase {
         await fulfillment(of: [ready], timeout: 2)
         XCTAssertEqual(manager.jobs.first?.id, job.id)
         XCTAssertEqual(authorizations, ["Bearer rejected-test-token", "Bearer corrected-test-token"])
+        manager.dismiss(manager.jobs[0])
+    }
+
+    @MainActor
+    func testRejectedJobWithoutInputOffersNoRetryAfterRelaunch() async throws {
+        let suite = "PrintJobs-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        var requests = 0
+        StubProtocol.handler = { _ in
+            requests += 1
+            return (400, "application/json", Data(#"{"detail":"bad face upload"}"#.utf8))
+        }
+        let manager = PrintJobManager(defaults: defaults, notifications: false, makeService: { _, _ in try self.service() })
+        manager.start(input: .photo(Data([1]), heightMM: 10), name: "Rejected", kind: "photo")
+        let failed = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in manager.jobs.first?.error != nil }, object: nil)
+        await fulfillment(of: [failed], timeout: 2)
+        let job = try XCTUnwrap(manager.jobs.first)
+        XCTAssertTrue(job.rejected)
+        XCTAssertEqual(job.error, "The print server returned HTTP 400: bad face upload")
+        XCTAssertTrue(manager.canRetry(job))
+
+        let restored = PrintJobManager(defaults: defaults, notifications: false, makeService: { _, _ in try self.service() })
+        let restoredJob = try XCTUnwrap(restored.jobs.first)
+        XCTAssertTrue(restoredJob.rejected)
+        XCTAssertFalse(restored.canRetry(restoredJob))
+        let sent = requests
+        restored.retry(restoredJob)
+        try await Task.sleep(for: .milliseconds(200))
+        XCTAssertEqual(requests, sent)
+        XCTAssertEqual(restored.jobs.first?.error, "The print server returned HTTP 400: bad face upload")
+        restored.dismiss(restoredJob)
+        manager.dismiss(job)
+    }
+
+    @MainActor
+    func testReattachAuthFailureKeepsRetryAvailable() async throws {
+        let suite = "PrintJobs-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        var job = PrintJob(id: UUID().uuidString, name: "Restored", kind: "photo", baseURL: PrintService.configuredBaseURL)
+        job.error = PrintError.lostContact.localizedDescription
+        defaults.set(try JSONEncoder().encode([job]), forKey: "printJobs")
+        StubProtocol.handler = { _ in (401, "application/json", Data(#"{"detail":"missing or wrong bearer token"}"#.utf8)) }
+        let manager = PrintJobManager(defaults: defaults, notifications: false, makeService: { _, _ in try self.service() })
+        manager.retry(manager.jobs[0])
+        let failed = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in manager.jobs.first?.error?.contains("401") == true }, object: nil)
+        await fulfillment(of: [failed], timeout: 2)
+        XCTAssertFalse(manager.jobs[0].rejected)
+        XCTAssertTrue(manager.canRetry(manager.jobs[0]))
         manager.dismiss(manager.jobs[0])
     }
 
@@ -702,11 +772,17 @@ private final class StubProtocol: URLProtocol {
     nonisolated(unsafe) static var handler: ((URLRequest) -> (Int, String, Data))?
     nonisolated(unsafe) static var finishLoading = true
     nonisolated(unsafe) static var chunkDelay: TimeInterval = 0
+    nonisolated(unsafe) static var connectFailures = 0
 
     override class func canInit(with request: URLRequest) -> Bool { true }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
 
     override func startLoading() {
+        if Self.connectFailures > 0 {
+            Self.connectFailures -= 1
+            client?.urlProtocol(self, didFailWithError: URLError(.timedOut))
+            return
+        }
         guard let handler = Self.handler else {
             client?.urlProtocol(self, didFailWithError: URLError(.cannotConnectToHost))
             return
