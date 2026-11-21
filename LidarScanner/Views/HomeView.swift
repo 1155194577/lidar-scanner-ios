@@ -5,6 +5,7 @@ struct HomeView: View {
     @State private var activeMode: ScanKind?
     @State private var showsSettings = false
     @State private var showsPhotoPrint = false
+    @State private var showsFaceScan = false
 
     var body: some View {
         NavigationStack {
@@ -28,6 +29,12 @@ struct HomeView: View {
                         subtitle: "One photo plus the object's LiDAR-measured height, turned into a printable STL.",
                         identifier: "photoPrintButton"
                     ) { showsPhotoPrint = true }
+                    ModeRow(
+                        systemImage: "face.smiling",
+                        title: "Face Scan",
+                        subtitle: "Your face from the front TrueDepth camera, made into a printable bust STL.",
+                        identifier: "faceScanButton"
+                    ) { showsFaceScan = true }
                 } header: {
                     Text("New Scan")
                 } footer: {
@@ -69,6 +76,13 @@ struct HomeView: View {
                 PhotoPrintView()
             } else {
                 UnsupportedView(feature: "Photo Print", requirement: "an iPhone or iPad with a LiDAR sensor")
+            }
+        }
+        .fullScreenCover(isPresented: $showsFaceScan) {
+            if DeviceSupport.faceScan {
+                FaceScanView()
+            } else {
+                UnsupportedView(feature: "Face Scan", requirement: "an iPhone or iPad with Face ID (TrueDepth camera)")
             }
         }
         .fullScreenCover(item: $activeMode, onDismiss: store.reload) { kind in

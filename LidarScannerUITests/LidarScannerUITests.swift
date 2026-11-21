@@ -22,6 +22,7 @@ final class LidarScannerUITests: XCTestCase {
         XCTAssertTrue(app.buttons["roomScanButton"].exists)
         XCTAssertTrue(app.buttons["objectScanButton"].exists)
         XCTAssertTrue(app.buttons["photoPrintButton"].exists)
+        XCTAssertTrue(app.buttons["faceScanButton"].exists)
         XCTAssertTrue(app.buttons["myScansLink"].exists)
         XCTAssertEqual(app.staticTexts["scanCount"].label, "0")
     }
@@ -177,6 +178,40 @@ final class LidarScannerUITests: XCTestCase {
         XCTAssertFalse(app.alerts["Couldn't print photo"].exists)
     }
 
+    func testFaceScanExplainsMissingTrueDepth() {
+        let app = launch(["-UITestForceUnsupported"])
+        app.buttons["faceScanButton"].tap()
+        XCTAssertTrue(app.staticTexts["Face Scan Unavailable"].waitForExistence(timeout: 5))
+        app.buttons["closeButton"].tap()
+        XCTAssertTrue(app.buttons["faceScanButton"].waitForExistence(timeout: 5))
+    }
+
+    /// Needs the stub server: `python3 scripts/print_stub.py` (port 8765).
+    func testFaceScanUploadsFaceDepthAndOpensBustSTL() throws {
+        try requirePrintStub()
+        let app = launch(["-UITestFakeFaceCapture", "-printBaseURL", Self.stubURL, "-printAPIToken", Self.stubToken])
+        app.buttons["faceScanButton"].tap()
+
+        let height = app.staticTexts["bustHeight"]
+        XCTAssertTrue(height.waitForExistence(timeout: 5))
+        XCTAssertEqual(height.label, "Bust height: 100 mm")
+        app.steppers["bustHeightStepper"].buttons.element(boundBy: 1).tap()
+        XCTAssertEqual(height.label, "Bust height: 110 mm")
+        app.buttons["captureFaceButton"].tap()
+
+        assertShareSheet(in: app, captionPrefix: "Face ", errorAlert: "Couldn't print face", timeout: 15)
+        attachScreenshot(app, name: "face-stl")
+
+        let last = try lastStubRequest()
+        XCTAssertEqual(last["mode"] as? String, "face")
+        XCTAssertEqual(last["depth_width"] as? Int, 64)
+        XCTAssertEqual(last["depth_height"] as? Int, 48)
+        XCTAssertEqual(last["face_vertex_count"] as? Int, 4)
+        XCTAssertEqual(last["height_mm"] as? Double, 110)
+        XCTAssertEqual((last["face_transform"] as? [Double])?.count, 16)
+        XCTAssertNotNil(last["depth_intrinsics"] as? [String: Any])
+    }
+
     func testPrintWithWrongTokenAsksToCheckSettings() throws {
         try requirePrintStub()
         let app = launch(["-UITestSeedSampleScans", "-printBaseURL", Self.stubURL, "-printAPIToken", "wrong"])
@@ -236,6 +271,17 @@ final class LidarScannerUITests: XCTestCase {
         attachment.name = name
         attachment.lifetime = .keepAlways
         add(attachment)
+    }
+
+    private func lastStubRequest() throws -> [String: Any] {
+        let done = expectation(description: "stub last request")
+        var body = Data()
+        URLSession.shared.dataTask(with: URL(string: "\(Self.stubURL)/last")!) { data, _, _ in
+            body = data ?? Data()
+            done.fulfill()
+        }.resume()
+        wait(for: [done], timeout: 5)
+        return try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: Any], "GET /last returned no JSON")
     }
 
     private static let stubURL = "http://127.0.0.1:8765"

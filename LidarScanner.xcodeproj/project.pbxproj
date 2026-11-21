@@ -24,8 +24,11 @@
 		85464DBFEC850BAD6CEABBAA /* SampleCube.usdz in Resources */ = {isa = PBXBuildFile; fileRef = 847C4A0C1369226AF4808EE4 /* SampleCube.usdz */; };
 		8667ED2BDD60E0D6F87B2D73 /* PhotoPrintTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5C087DF6219678C4951C8740 /* PhotoPrintTests.swift */; };
 		8798B9B3B8ED9FD73CE5F592 /* ActivityView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C8407C2985E2FFF7986A9BC4 /* ActivityView.swift */; };
+		91752881DAE2BCBA116E7E03 /* FaceScanView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0D629D876B83F892C7BB209 /* FaceScanView.swift */; };
 		96506DE04905D6C3933F26AA /* PhotoPrintView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4030F8493820551CA06FD224 /* PhotoPrintView.swift */; };
+		D3B4FB1A7F8BFC7B50DE026E /* FaceCapture.swift in Sources */ = {isa = PBXBuildFile; fileRef = 11D27955B848FD430FD3595F /* FaceCapture.swift */; };
 		ED9CBD58831D55A87F79AA4F /* ExportSample.usdz in Resources */ = {isa = PBXBuildFile; fileRef = FFCD04E0C144E654C31E0E6A /* ExportSample.usdz */; };
+		F0A6F33F1C122FBCB98161CB /* FaceCaptureTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4DC04ECF5F76D33ACA2794D6 /* FaceCaptureTests.swift */; };
 		F358299C9768C7B853CFBC26 /* PrintServiceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3E4B9C6E706A7F0A1044D1D6 /* PrintServiceTests.swift */; };
 		F5E1F4B69A346854F7F23658 /* RoomScanView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2BE16B613004BEB3D632B32 /* RoomScanView.swift */; };
 		F8AC652EAB45CEE69EF26635 /* ScanStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5AEE1F5D3FC4825BDA978F4C /* ScanStore.swift */; };
@@ -52,11 +55,13 @@
 /* Begin PBXFileReference section */
 		07EE6C86D82B1C9CBE223D48 /* LidarScannerUITests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = LidarScannerUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		0948124D94F88A05132C8D1C /* PrintService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PrintService.swift; sourceTree = "<group>"; };
+		11D27955B848FD430FD3595F /* FaceCapture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FaceCapture.swift; sourceTree = "<group>"; };
 		1327490574893FDE679AF73E /* LaunchArguments.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LaunchArguments.swift; sourceTree = "<group>"; };
 		186B1783B50F7042BF77067E /* ObjectScanView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ObjectScanView.swift; sourceTree = "<group>"; };
 		3E4B9C6E706A7F0A1044D1D6 /* PrintServiceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PrintServiceTests.swift; sourceTree = "<group>"; };
 		4030F8493820551CA06FD224 /* PhotoPrintView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhotoPrintView.swift; sourceTree = "<group>"; };
 		4ADE67AD7F6A66051B9B8B61 /* KeychainStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeychainStore.swift; sourceTree = "<group>"; };
+		4DC04ECF5F76D33ACA2794D6 /* FaceCaptureTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FaceCaptureTests.swift; sourceTree = "<group>"; };
 		54FB452B361CBD769754AC19 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		5AEE1F5D3FC4825BDA978F4C /* ScanStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScanStore.swift; sourceTree = "<group>"; };
 		5C087DF6219678C4951C8740 /* PhotoPrintTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhotoPrintTests.swift; sourceTree = "<group>"; };
@@ -68,6 +73,7 @@
 		B2BE16B613004BEB3D632B32 /* RoomScanView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RoomScanView.swift; sourceTree = "<group>"; };
 		B758C4696E00787E91415462 /* STLExporter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = STLExporter.swift; sourceTree = "<group>"; };
 		B8BFDFCA721B0D943DB447DC /* DeviceSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceSupport.swift; sourceTree = "<group>"; };
+		C0D629D876B83F892C7BB209 /* FaceScanView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FaceScanView.swift; sourceTree = "<group>"; };
 		C65E56EFF2ACDCAA2E4C04BA /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		C789F36D9041AF57FD69D61B /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		C8407C2985E2FFF7986A9BC4 /* ActivityView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ActivityView.swift; sourceTree = "<group>"; };
@@ -90,6 +96,7 @@
 		3AC6393B0E4041EA810A8E81 /* LidarScannerTests */ = {
 			isa = PBXGroup;
 			children = (
+				4DC04ECF5F76D33ACA2794D6 /* FaceCaptureTests.swift */,
 				5C087DF6219678C4951C8740 /* PhotoPrintTests.swift */,
 				3E4B9C6E706A7F0A1044D1D6 /* PrintServiceTests.swift */,
 				87F0A168FB8895BC010B38B4 /* ScanStoreTests.swift */,
@@ -102,6 +109,7 @@
 			isa = PBXGroup;
 			children = (
 				C8407C2985E2FFF7986A9BC4 /* ActivityView.swift */,
+				C0D629D876B83F892C7BB209 /* FaceScanView.swift */,
 				DF61EF62F44AF9D1CC4DAEB5 /* HomeView.swift */,
 				186B1783B50F7042BF77067E /* ObjectScanView.swift */,
 				4030F8493820551CA06FD224 /* PhotoPrintView.swift */,
@@ -116,6 +124,7 @@
 			isa = PBXGroup;
 			children = (
 				B8BFDFCA721B0D943DB447DC /* DeviceSupport.swift */,
+				11D27955B848FD430FD3595F /* FaceCapture.swift */,
 				4ADE67AD7F6A66051B9B8B61 /* KeychainStore.swift */,
 				0948124D94F88A05132C8D1C /* PrintService.swift */,
 				5AEE1F5D3FC4825BDA978F4C /* ScanStore.swift */,
@@ -322,6 +331,8 @@
 			files = (
 				8798B9B3B8ED9FD73CE5F592 /* ActivityView.swift in Sources */,
 				7205225AFA1B5179CFF21200 /* DeviceSupport.swift in Sources */,
+				D3B4FB1A7F8BFC7B50DE026E /* FaceCapture.swift in Sources */,
+				91752881DAE2BCBA116E7E03 /* FaceScanView.swift in Sources */,
 				38B584EEC9A7699DF06A1BA3 /* HomeView.swift in Sources */,
 				2C2970A3478BF16445404766 /* KeychainStore.swift in Sources */,
 				3395E5F040C5D595887BE822 /* LaunchArguments.swift in Sources */,
@@ -349,6 +360,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				F0A6F33F1C122FBCB98161CB /* FaceCaptureTests.swift in Sources */,
 				8667ED2BDD60E0D6F87B2D73 /* PhotoPrintTests.swift in Sources */,
 				F358299C9768C7B853CFBC26 /* PrintServiceTests.swift in Sources */,
 				7DE70F0DC44AE8C71A244F94 /* STLExporterTests.swift in Sources */,

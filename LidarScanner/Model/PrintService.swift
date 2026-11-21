@@ -1,9 +1,10 @@
 import Foundation
 
-/// What gets sent to the print endpoint: a scan's mesh, or a single photo plus the LiDAR-measured object height.
+/// What gets sent to the print endpoint: a scan's mesh, a single photo plus the LiDAR-measured object height, or a TrueDepth face for a bust.
 enum PrintInput {
     case mesh(URL)
     case photo(Data, heightMM: Double)
+    case face(FaceCapture)
 }
 
 enum PrintError: LocalizedError, Equatable {
@@ -69,6 +70,8 @@ struct PrintService {
         case .photo(let data, let heightMM):
             form.addFile(name: "photo", fileName: "photo.jpg", contentType: "image/jpeg", data: data)
             form.addField(name: "height_mm", value: String(format: "%.1f", locale: Locale(identifier: "en_US_POSIX"), heightMM))
+        case .face(let capture):
+            try capture.addFields(to: &form)
         }
 
         var request = URLRequest(url: endpoint, timeoutInterval: 600)
@@ -131,7 +134,7 @@ struct PrintService {
     }
 }
 
-private struct MultipartForm {
+struct MultipartForm {
     let boundary: String
     private var body = Data()
 
