@@ -443,7 +443,7 @@ final class LidarScannerUITests: XCTestCase {
         XCTAssertEqual(height.label, "Bust height: 100 mm")
         app.steppers["bustHeightStepper"].buttons.element(boundBy: 1).tap()
         XCTAssertEqual(height.label, "Bust height: 110 mm")
-        app.buttons["captureFaceButton"].tap()
+        tapCaptureFace(in: app)
 
         assertShareSheet(in: app, captionPrefix: "Face ", errorAlert: "Couldn't print face", timeout: 15)
         attachScreenshot(app, name: "face-stl")
@@ -462,7 +462,7 @@ final class LidarScannerUITests: XCTestCase {
         try requirePrintStub()
         let app = launch(["-UITestResetScans", "-UITestFakeFaceCapture", "-printBaseURL", Self.stubURL, "-printAPIToken", Self.stubToken])
         app.buttons["faceScanButton"].tap()
-        app.buttons["captureFaceButton"].tap()
+        tapCaptureFace(in: app)
 
         openPrintResult(in: app, timeout: 15)
         let save = app.buttons["Save to My Scans"]
@@ -575,6 +575,15 @@ final class LidarScannerUITests: XCTestCase {
     }
 
     /// Waits for a print job in the banner to finish, then opens its Save / Share sheet.
+    /// The capture button stays disabled until the (fake) face is detected, and a tap before then does nothing.
+    private func tapCaptureFace(in app: XCUIApplication) {
+        let capture = app.buttons["captureFaceButton"]
+        XCTAssertTrue(capture.waitForExistence(timeout: 5))
+        let enabled = XCTNSPredicateExpectation(predicate: NSPredicate(format: "isEnabled == true"), object: capture)
+        XCTAssertEqual(XCTWaiter.wait(for: [enabled], timeout: 10), .completed, "No face detected")
+        capture.tap()
+    }
+
     private func openPrintResult(in app: XCUIApplication, timeout: TimeInterval) {
         let result = app.buttons["printResultButton"].firstMatch
         XCTAssertTrue(result.waitForExistence(timeout: timeout), "Print job did not finish")
@@ -599,9 +608,11 @@ final class LidarScannerUITests: XCTestCase {
             return
         }
         XCTAssertTrue(shareSheet.exists, "STL share sheet did not open within \(Int(timeout)) s")
-        let caption = shareSheet.otherElements["LP.CaptionBar.TopCaption"]
-        XCTAssertTrue(caption.waitForExistence(timeout: 5))
-        XCTAssertTrue(caption.label.hasPrefix(captionPrefix), "Unexpected shared file \(caption.label)")
+        // The link preview fills in its caption after the sheet appears, sometimes several seconds later.
+        let caption = shareSheet.descendants(matching: .any)["LP.CaptionBar.TopCaption"]
+        let named = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label BEGINSWITH %@", captionPrefix), object: caption)
+        let result = XCTWaiter.wait(for: [named], timeout: 15)
+        XCTAssertEqual(result, .completed, "Unexpected shared file \(caption.exists ? caption.label : "(no caption)")")
     }
 
     private func attachScreenshot(_ app: XCUIApplication, name: String) {
