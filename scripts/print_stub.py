@@ -54,14 +54,14 @@ UPLOAD_NAMES = ("mesh", "photo", "depth", "depth_confidence", "face_vertices")
 UPLOAD_FILENAMES = {"photo": "photo.jpg", "depth": "depth.f32", "depth_confidence": "confidence.u8",
                     "face_vertices": "face_vertices.f32"}
 MESH_TYPES = {"model/vnd.usdz+zip": ".usdz", "model/obj": ".obj", "application/x-ply": ".ply"}
-MODES = ("fail", "expire", "drop", "legacy", "compat")
+MODES = ("fail", "expire", "drop", "legacy")
 UPLOAD_EXPIRES = 900
 
 
 def split_mode(path):
     """('/expire-drop/print', ...) -> ({'expire', 'drop'}, '/print')."""
     parts = path.split("?")[0].rstrip("/").split("/")
-    if len(parts) > 1 and parts[1] and all(mode in MODES for mode in parts[1].split("-")):
+    if len(parts) > 1 and parts[1] and all(mode in (*MODES, "compat") for mode in parts[1].split("-")):
         return set(parts[1].split("-")), "/" + "/".join(parts[2:])
     return set(), path.split("?")[0].rstrip("/")
 
