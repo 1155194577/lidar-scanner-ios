@@ -622,6 +622,24 @@ final class PrintServiceTests: XCTestCase {
     }
 
     @MainActor
+    func testReattachAuthFailureKeepsRetryAvailable() async throws {
+        let suite = "PrintJobs-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        var job = PrintJob(id: UUID().uuidString, name: "Restored", kind: "photo", baseURL: PrintService.configuredBaseURL)
+        job.error = PrintError.lostContact.localizedDescription
+        defaults.set(try JSONEncoder().encode([job]), forKey: "printJobs")
+        StubProtocol.handler = { _ in (401, "application/json", Data(#"{"detail":"missing or wrong bearer token"}"#.utf8)) }
+        let manager = PrintJobManager(defaults: defaults, notifications: false, makeService: { _, _ in try self.service() })
+        manager.retry(manager.jobs[0])
+        let failed = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in manager.jobs.first?.error?.contains("401") == true }, object: nil)
+        await fulfillment(of: [failed], timeout: 2)
+        XCTAssertFalse(manager.jobs[0].rejected)
+        XCTAssertTrue(manager.canRetry(manager.jobs[0]))
+        manager.dismiss(manager.jobs[0])
+    }
+
+    @MainActor
     func testRestoringOriginalServerAllowsInputlessJobToReconnect() async throws {
         let previous = UserDefaults.standard.object(forKey: PrintService.baseURLKey)
         defer { UserDefaults.standard.set(previous, forKey: PrintService.baseURLKey) }

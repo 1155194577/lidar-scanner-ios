@@ -194,6 +194,7 @@ final class PrintJobManager: ObservableObject {
             }
             var lastError: Error = PrintError.server(status: 404, message: "Lost contact with the print server")
             var resend = submit
+            var uploaded = false
             for _ in 0..<3 {
                 do {
                     let service = try service(job)
@@ -202,7 +203,8 @@ final class PrintJobManager: ObservableObject {
                     }
                     let url: URL
                     let accepted = jobs.first(where: { $0.id == job.id })?.accepted ?? false
-                    if resend, !accepted, let input = inputs[job.id] {
+                    uploaded = resend && !accepted && inputs[job.id] != nil
+                    if uploaded, let input = inputs[job.id] {
                         url = try await service.requestSTL(for: input, name: job.id, in: Self.directory, jobID: job.id, onProgress: progress) { _ in
                             Task { @MainActor in
                                 guard let index = self.jobs.firstIndex(where: { $0.id == job.id }) else { return }
@@ -236,6 +238,12 @@ final class PrintJobManager: ObservableObject {
                     update(job.id, progress: PrintProgress(stage: "reconnecting", message: "Reconnecting to print server", progress: nil))
                     try? await Task.sleep(for: .seconds(1))
                 }
+            }
+            // The server refused the upload itself, so it holds no job to re-attach to.
+            if uploaded, case PrintError.server(let status, _) = lastError, (400..<500).contains(status),
+               ![404, 408, 429].contains(status), let index = jobs.firstIndex(where: { $0.id == job.id }),
+               !jobs[index].accepted {
+                jobs[index].rejected = true
             }
             if case PrintError.server(404, _) = lastError {
                 complete(id: job.id, result: .failure(PrintError.lostContact))
@@ -296,10 +304,6 @@ final class PrintJobManager: ObservableObject {
             if case PrintError.jobFailed = error { jobs[index].retryFromStart = true }
             if case PrintError.invalidBaseURL = error { jobs[index].retryFromStart = true }
             if case PrintError.server(422, _) = error { jobs[index].retryFromStart = true }
-            if case PrintError.server(let status, _) = error, (400..<500).contains(status),
-               ![404, 408, 429].contains(status), !jobs[index].accepted {
-                jobs[index].rejected = true
-            }
         }
         persist()
         tasks.removeValue(forKey: id)?.cancel()
