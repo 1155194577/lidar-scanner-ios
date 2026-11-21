@@ -36,16 +36,7 @@ enum STLExporter {
 
     @MainActor
     static func export(_ source: URL) async throws -> STLFile {
-        let root: Entity
-        if #available(iOS 18.0, *) {
-            root = try await Entity(contentsOf: source)
-        } else {
-            guard let entity = try await Entity.loadAsync(contentsOf: source).values.first(where: { _ in true }) else {
-                throw ExportError.unreadableScan
-            }
-            root = entity
-        }
-
+        let root = try await loadModel(at: source)
         var parts: [MeshPart] = []
         collectParts(from: root, into: &parts)
         try Task.checkCancellation()
@@ -60,6 +51,21 @@ enum STLExporter {
         } onCancel: {
             writer.cancel()
         }
+    }
+
+    @MainActor
+    private static func loadModel(at source: URL) async throws -> Entity {
+        do {
+            if #available(iOS 18.0, *) {
+                return try await Entity(contentsOf: source)
+            }
+            if let entity = try await Entity.loadAsync(contentsOf: source).values.first(where: { _ in true }) {
+                return entity
+            }
+        } catch {
+            try Task.checkCancellation()
+        }
+        throw ExportError.unreadableScan
     }
 
     @MainActor

@@ -93,6 +93,7 @@ final class LidarScannerUITests: XCTestCase {
 
         let alert = app.alerts["Couldn't export STL"]
         XCTAssertTrue(alert.waitForExistence(timeout: 10))
+        XCTAssertTrue(alert.staticTexts["This scan could not be opened as a 3D model."].exists)
         alert.buttons["OK"].tap()
         XCTAssertTrue(menu.exists)
     }
