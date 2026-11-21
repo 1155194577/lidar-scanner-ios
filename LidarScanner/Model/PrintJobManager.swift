@@ -110,11 +110,17 @@ final class PrintJobManager: ObservableObject {
     }
 
     func start(input: PrintInput, name: String, kind: String) {
+        var sourceScanFileName: String?
+        if case .mesh(let url) = input { sourceScanFileName = url.lastPathComponent }
+        start(payload: try? PrintService.payload(for: input), input: input, name: name, kind: kind, sourceScanFileName: sourceScanFileName)
+    }
+
+    private func start(payload: PrintPayload?, input: PrintInput?, name: String, kind: String, sourceScanFileName: String?) {
         var job = PrintJob(id: UUID().uuidString, name: name, kind: kind, baseURL: PrintService.configuredBaseURL)
-        if case .mesh(let url) = input { job.sourceScanFileName = url.lastPathComponent }
+        job.sourceScanFileName = sourceScanFileName
         jobs.append(job)
         inputs[job.id] = input
-        if let payload = try? PrintService.payload(for: input) {
+        if let payload {
             payloads[job.id] = payload
             try? payload.save(to: Self.payloadFolder(job.id))
         }
@@ -149,8 +155,9 @@ final class PrintJobManager: ObservableObject {
     }
 
     func canRetry(_ job: PrintJob) -> Bool {
-        if job.rejected && inputs[job.id] == nil { return false }
-        return !(job.retryFromStart || job.baseURL != PrintService.configuredBaseURL) || inputs[job.id] != nil
+        let restartable = inputs[job.id] != nil || payload(for: job.id) != nil
+        if job.rejected && !restartable { return false }
+        return !(job.retryFromStart || job.baseURL != PrintService.configuredBaseURL) || restartable
     }
 
     func printedModel(for job: PrintJob) -> PrintedModel? {
@@ -185,7 +192,8 @@ final class PrintJobManager: ObservableObject {
     func retry(_ job: PrintJob) {
         guard canRetry(job) else { return }
         if job.retryFromStart || job.baseURL != PrintService.configuredBaseURL {
-            guard let input = inputs[job.id] else {
+            let input = inputs[job.id]
+            guard let payload = input.flatMap({ try? PrintService.payload(for: $0) }) ?? payload(for: job.id) else {
                 if let index = jobs.firstIndex(where: { $0.id == job.id }) {
                     jobs[index].error = "Original print input is no longer available; print again."
                     persist()
@@ -193,7 +201,7 @@ final class PrintJobManager: ObservableObject {
                 return
             }
             dismiss(job)
-            start(input: input, name: job.name, kind: job.kind)
+            start(payload: payload, input: input, name: job.name, kind: job.kind, sourceScanFileName: job.sourceScanFileName)
             return
         }
         guard let index = jobs.firstIndex(where: { $0.id == job.id }) else { return }
