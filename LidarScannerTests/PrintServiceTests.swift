@@ -257,12 +257,37 @@ final class PrintServiceTests: XCTestCase {
         defer { defaults.removePersistentDomain(forName: suite) }
         let job = PrintJob(id: UUID().uuidString, name: "Concurrent", kind: "photo", baseURL: PrintService.configuredBaseURL)
         defaults.set(try JSONEncoder().encode([job]), forKey: "printJobs")
-        StubProtocol.handler = { _ in (200, "application/x-ndjson", Data((#"{"type":"done","stl_base64":"c3Rs"}"# + "\n").utf8)) }
+        let connected = expectation(description: "stream connected")
+        StubProtocol.finishLoading = false
+        defer { StubProtocol.finishLoading = true }
+        StubProtocol.handler = { _ in
+            connected.fulfill()
+            return (200, "application/x-ndjson", Data())
+        }
         let manager = PrintJobManager(defaults: defaults, notifications: false, makeService: { _ in try self.service() })
         manager.sceneChanged(.active)
+        await fulfillment(of: [connected], timeout: 2)
         manager.complete(id: job.id, result: .failure(URLError(.networkConnectionLost)), source: .download)
         XCTAssertNil(manager.jobs.first?.error)
         manager.complete(id: job.id, result: .failure(URLError(.cancelled)), source: .download)
+        XCTAssertNil(manager.jobs.first?.error)
+        let file = directory.appendingPathComponent("concurrent.stl")
+        try Data("stl".utf8).write(to: file)
+        manager.complete(id: job.id, result: .success(file))
+        XCTAssertNotNil(manager.jobs.first?.result)
+        manager.dismiss(manager.jobs[0])
+    }
+
+    @MainActor
+    func testUnavailableBackgroundTransferFallsBackToForegroundStream() async throws {
+        let suite = "PrintJobs-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let job = PrintJob(id: UUID().uuidString, name: "Fallback", kind: "photo", baseURL: PrintService.configuredBaseURL)
+        defaults.set(try JSONEncoder().encode([job]), forKey: "printJobs")
+        StubProtocol.handler = { _ in (200, "application/x-ndjson", Data((#"{"type":"done","stl_base64":"c3Rs"}"# + "\n").utf8)) }
+        let manager = PrintJobManager(defaults: defaults, notifications: false, makeService: { _ in try self.service() })
+        manager.complete(id: job.id, result: .failure(URLError(.unknown)), source: .download)
         XCTAssertNil(manager.jobs.first?.error)
         let ready = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in manager.jobs.first?.result != nil }, object: nil)
         await fulfillment(of: [ready], timeout: 2)

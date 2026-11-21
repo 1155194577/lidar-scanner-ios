@@ -135,9 +135,13 @@ final class PrintJobManager: ObservableObject {
             }
             for job in jobs where !job.isFinished && job.accepted { startDownload(job) }
         } else if phase == .active {
-            PrintBackgroundDownload.shared.connect()
             endBackgroundTask()
-            for job in jobs where !job.isFinished && tasks[job.id] == nil { run(job, submit: false) }
+            PrintBackgroundDownload.shared.connect { ids in
+                Task { @MainActor in
+                    self.downloads.formUnion(ids)
+                    for job in self.jobs where !job.isFinished && self.tasks[job.id] == nil { self.run(job, submit: false) }
+                }
+            }
         }
     }
 
@@ -240,6 +244,11 @@ final class PrintJobManager: ObservableObject {
             if case PrintError.server(422, _) = error { terminal = true }
             if case PrintError.serverChanged = error { terminal = true }
             if !terminal, tasks[id] != nil || downloads.contains(id) { return }
+            if !terminal, source == .download {
+                update(id, progress: PrintProgress(stage: "reconnecting", message: "Waiting to reconnect to print server", progress: nil))
+                if active, tasks[id] == nil { run(jobs[index], submit: false) }
+                return
+            }
         }
         switch result {
         case .success(let url):
@@ -298,7 +307,9 @@ final class PrintBackgroundDownload: NSObject, URLSessionDownloadDelegate, @unch
         return URLSession(configuration: configuration, delegate: self, delegateQueue: .main)
     }()
 
-    func connect() { _ = session }
+    func connect(restored: @escaping @Sendable (Set<String>) -> Void = { _ in }) {
+        session.getAllTasks { tasks in restored(Set(tasks.compactMap(\.taskDescription))) }
+    }
 
     func start(id: String, request: URLRequest) {
         lock.lock()
