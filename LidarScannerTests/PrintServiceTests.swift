@@ -216,7 +216,7 @@ final class PrintServiceTests: XCTestCase {
             complete.fulfill()
             return (200, "application/x-ndjson", Data((#"{"type":"done","stl_base64":"c3Rs"}"# + "\n").utf8))
         }
-        let manager = PrintJobManager(defaults: defaults, notifications: false, makeService: { _ in try self.service() })
+        let manager = PrintJobManager(defaults: defaults, notifications: false, makeService: { _, _ in try self.service() })
         XCTAssertEqual(manager.jobs.first?.id, job.id)
         manager.sceneChanged(.active)
         await fulfillment(of: [complete], timeout: 5)
@@ -240,7 +240,7 @@ final class PrintServiceTests: XCTestCase {
         defer { defaults.removePersistentDomain(forName: suite) }
         let job = PrintJob(id: UUID().uuidString, name: "Old server", kind: "photo", baseURL: "https://old-print.invalid")
         defaults.set(try JSONEncoder().encode([job]), forKey: "printJobs")
-        let manager = PrintJobManager(defaults: defaults, notifications: false, makeService: { _ in
+        let manager = PrintJobManager(defaults: defaults, notifications: false, makeService: { _, _ in
             XCTFail("Must not create an authenticated service for the old server")
             return try self.service()
         })
@@ -265,7 +265,7 @@ final class PrintServiceTests: XCTestCase {
             connected.fulfill()
             return (200, "application/x-ndjson", Data())
         }
-        let manager = PrintJobManager(defaults: defaults, notifications: false, makeService: { _ in try self.service() })
+        let manager = PrintJobManager(defaults: defaults, notifications: false, makeService: { _, _ in try self.service() })
         manager.sceneChanged(.active)
         await fulfillment(of: [connected], timeout: 2)
         manager.complete(id: job.id, result: .failure(URLError(.networkConnectionLost)), source: .download)
@@ -287,7 +287,7 @@ final class PrintServiceTests: XCTestCase {
         let job = PrintJob(id: UUID().uuidString, name: "Fallback", kind: "photo", baseURL: PrintService.configuredBaseURL)
         defaults.set(try JSONEncoder().encode([job]), forKey: "printJobs")
         StubProtocol.handler = { _ in (200, "application/x-ndjson", Data((#"{"type":"done","stl_base64":"c3Rs"}"# + "\n").utf8)) }
-        let manager = PrintJobManager(defaults: defaults, notifications: false, makeService: { _ in try self.service() })
+        let manager = PrintJobManager(defaults: defaults, notifications: false, makeService: { _, _ in try self.service() })
         manager.complete(id: job.id, result: .failure(URLError(.unknown)), source: .download)
         XCTAssertNil(manager.jobs.first?.error)
         let ready = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in manager.jobs.first?.result != nil }, object: nil)
@@ -304,7 +304,7 @@ final class PrintServiceTests: XCTestCase {
         let suite = "PrintJobs-\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suite)!
         defer { defaults.removePersistentDomain(forName: suite) }
-        let manager = PrintJobManager(defaults: defaults, notifications: false, makeService: { job in
+        let manager = PrintJobManager(defaults: defaults, notifications: false, makeService: { job, _ in
             if job.baseURL == "bad-url" { throw PrintError.invalidBaseURL(job.baseURL) }
             XCTAssertEqual(job.baseURL, "http://print.test")
             return try self.service()
@@ -338,7 +338,7 @@ final class PrintServiceTests: XCTestCase {
             submitted = true
             return (200, "model/stl", Data("stl".utf8))
         }
-        let manager = PrintJobManager(defaults: defaults, notifications: false, makeService: { _ in try self.service() }, authorize: {
+        let manager = PrintJobManager(defaults: defaults, notifications: false, makeService: { _, _ in try self.service() }, authorize: {
             await withCheckedContinuation { continuation in
                 release = continuation
                 requested.fulfill()
@@ -393,7 +393,7 @@ final class PrintServiceTests: XCTestCase {
             if request.httpMethod == "POST" { return (200, "application/x-ndjson", Data()) }
             return (404, "application/json", Data(#"{"detail":"unknown job"}"#.utf8))
         }
-        let manager = PrintJobManager(defaults: defaults, notifications: false, makeService: { _ in try self.service() })
+        let manager = PrintJobManager(defaults: defaults, notifications: false, makeService: { _, _ in try self.service() })
         manager.start(input: .photo(Data([1]), heightMM: 10), name: "Dropped", kind: "photo")
         let failed = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in manager.jobs.first?.error != nil }, object: nil)
         await fulfillment(of: [failed], timeout: 4)
@@ -416,7 +416,7 @@ final class PrintServiceTests: XCTestCase {
         let suite = "PrintJobs-\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suite)!
         defer { defaults.removePersistentDomain(forName: suite) }
-        let manager = PrintJobManager(defaults: defaults, notifications: false, makeService: { job in
+        let manager = PrintJobManager(defaults: defaults, notifications: false, makeService: { job, _ in
             XCTAssertEqual(job.baseURL, "http://print.test")
             return try self.service()
         })
@@ -462,6 +462,37 @@ final class PrintServiceTests: XCTestCase {
         }
     }
 
+    @MainActor
+    func testAuthenticationRetryUsesCorrectedTokenAndSameJobID() async throws {
+        let suite = "PrintJobs-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        var token = "rejected-test-token"
+        var authorizations = [String?]()
+        StubProtocol.handler = { request in
+            let authorization = request.value(forHTTPHeaderField: "Authorization")
+            authorizations.append(authorization)
+            if authorization == "Bearer rejected-test-token" {
+                return (401, "application/json", Data(#"{"detail":"invalid token"}"#.utf8))
+            }
+            return (200, "model/stl", Data("stl".utf8))
+        }
+        let manager = PrintJobManager(defaults: defaults, notifications: false, makeService: { _, suppliedToken in
+            try self.service(token: suppliedToken)
+        }, currentToken: { token })
+        manager.start(input: .photo(Data([1]), heightMM: 10), name: "Auth retry", kind: "photo")
+        let failed = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in manager.jobs.first?.error != nil }, object: nil)
+        await fulfillment(of: [failed], timeout: 2)
+        let job = try XCTUnwrap(manager.jobs.first)
+        token = "corrected-test-token"
+        manager.retry(job)
+        let ready = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in manager.jobs.first?.result != nil }, object: nil)
+        await fulfillment(of: [ready], timeout: 2)
+        XCTAssertEqual(manager.jobs.first?.id, job.id)
+        XCTAssertEqual(authorizations, ["Bearer rejected-test-token", "Bearer corrected-test-token"])
+        manager.dismiss(manager.jobs[0])
+    }
+
     func testPersistedResultUsesRelativePathAndMigratesOldContainer() throws {
         let legacy = #"{"id":"job","name":"Cube","kind":"photo","baseURL":"http://print.test","result":"file:///old-container/Library/Application%20Support/PrintJobs/job/Cube.stl"}"#
         let job = try JSONDecoder().decode(PrintJob.self, from: Data(legacy.utf8))
@@ -492,10 +523,10 @@ final class PrintServiceTests: XCTestCase {
         XCTAssertThrowsError(try PrintBackgroundDownload.saveResponse(nil, file: file, id: "missing"))
     }
 
-    private func service(stallTimeout: TimeInterval = 10) throws -> PrintService {
+    private func service(stallTimeout: TimeInterval = 10, token: String? = nil) throws -> PrintService {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [StubProtocol.self]
-        return try PrintService(baseURL: "http://print.test", token: nil, session: URLSession(configuration: configuration), stallTimeout: stallTimeout)
+        return try PrintService(baseURL: "http://print.test", token: token, session: URLSession(configuration: configuration), stallTimeout: stallTimeout)
     }
 }
 

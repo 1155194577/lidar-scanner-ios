@@ -67,14 +67,16 @@ final class PrintJobManager: ObservableObject {
     private var active = UIApplication.shared.applicationState == .active
     private let defaults: UserDefaults
     private let notifications: Bool
-    private let makeService: ((PrintJob) throws -> PrintService)?
+    private let makeService: ((PrintJob, String?) throws -> PrintService)?
+    private let currentToken: () -> String?
     private let authorize: (() async -> Void)?
     private let notify: ((String, String, String) -> Void)?
 
-    init(defaults: UserDefaults = .standard, notifications: Bool = true, makeService: ((PrintJob) throws -> PrintService)? = nil, authorize: (() async -> Void)? = nil, notify: ((String, String, String) -> Void)? = nil) {
+    init(defaults: UserDefaults = .standard, notifications: Bool = true, makeService: ((PrintJob, String?) throws -> PrintService)? = nil, authorize: (() async -> Void)? = nil, notify: ((String, String, String) -> Void)? = nil, currentToken: @escaping () -> String? = { PrintService.configuredToken }) {
         self.defaults = defaults
         self.notifications = notifications
         self.makeService = makeService
+        self.currentToken = currentToken
         self.authorize = authorize
         self.notify = notify
         if defaults == .standard, LaunchArguments.contains(LaunchArguments.resetScans) { defaults.removeObject(forKey: "printJobs") }
@@ -91,7 +93,7 @@ final class PrintJobManager: ObservableObject {
         let job = PrintJob(id: UUID().uuidString, name: name, kind: kind, baseURL: PrintService.configuredBaseURL)
         jobs.append(job)
         inputs[job.id] = input
-        tokens[job.id] = PrintService.configuredToken
+        tokens[job.id] = currentToken()
         persist()
         run(job, submit: true)
     }
@@ -115,6 +117,7 @@ final class PrintJobManager: ObservableObject {
             return
         }
         guard let index = jobs.firstIndex(where: { $0.id == job.id }) else { return }
+        tokens[job.id] = currentToken()
         jobs[index].error = nil
         jobs[index].progress = PrintProgress(stage: "reconnecting", message: "Reconnecting to print server", progress: nil)
         persist()
@@ -161,8 +164,9 @@ final class PrintJobManager: ObservableObject {
 
     private func service(_ job: PrintJob) throws -> PrintService {
         guard job.baseURL == PrintService.configuredBaseURL else { throw PrintError.serverChanged }
-        if let makeService { return try makeService(job) }
-        return try PrintService(baseURL: job.baseURL, token: tokens[job.id] ?? PrintService.configuredToken)
+        let token = tokens[job.id] ?? currentToken()
+        if let makeService { return try makeService(job, token) }
+        return try PrintService(baseURL: job.baseURL, token: token)
     }
 
     private func run(_ job: PrintJob, submit: Bool) {
