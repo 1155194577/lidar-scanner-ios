@@ -15,6 +15,8 @@ enum PrintError: LocalizedError, Equatable {
         switch self {
         case .invalidBaseURL(let value):
             return "\"\(value)\" isn't a valid print server URL. Set it in Settings."
+        case .server(401, _):
+            return "The print server rejected the token (HTTP 401). Check the print token in Settings."
         case .server(let status, let message):
             return message.isEmpty ? "The print server returned HTTP \(status)." : "The print server returned HTTP \(status): \(message)"
         case .unexpectedResponse(let detail):
@@ -23,13 +25,20 @@ enum PrintError: LocalizedError, Equatable {
     }
 }
 
-/// Client for `POST {baseURL}/print`: multipart `mesh` (OBJ, PLY or USDZ, in metres) or `photo` + `height_mm`, answered with `model/stl`.
+/// Client for `POST {baseURL}/print`: multipart `mesh` (OBJ, PLY or USDZ, in metres) or `photo` + `height_mm`,
+/// authorised with `Authorization: Bearer <token>`, answered with `model/stl` (errors are JSON `{"detail"}`).
 struct PrintService {
     static let baseURLKey = "printBaseURL"
+    static let tokenKey = "printAPIToken"
 
     static var defaultBaseURL: String {
         (Bundle.main.object(forInfoDictionaryKey: "PrintBaseURL") as? String).flatMap { $0.isEmpty ? nil : $0 }
             ?? "http://localhost:8765"
+    }
+
+    /// The token saved in Settings (Keychain), else one passed as `-printAPIToken <token>` at launch.
+    static var configuredToken: String? {
+        (KeychainStore.read(tokenKey) ?? UserDefaults.standard.string(forKey: tokenKey)).flatMap { $0.isEmpty ? nil : $0 }
     }
 
     /// The base URL set in Settings (or via `-printBaseURL <url>` at launch), else the build's default.
@@ -38,15 +47,17 @@ struct PrintService {
     }
 
     let endpoint: URL
+    private let token: String?
     private let session: URLSession
 
-    init(baseURL: String = PrintService.configuredBaseURL, session: URLSession = .shared) throws {
+    init(baseURL: String = PrintService.configuredBaseURL, token: String? = PrintService.configuredToken, session: URLSession = .shared) throws {
         let trimmed = baseURL.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let url = URL(string: trimmed), let scheme = url.scheme?.lowercased(),
               ["http", "https"].contains(scheme), url.host?.isEmpty == false else {
             throw PrintError.invalidBaseURL(baseURL)
         }
         endpoint = url.appendingPathComponent("print")
+        self.token = token
         self.session = session
     }
 
@@ -64,6 +75,9 @@ struct PrintService {
         request.httpMethod = "POST"
         request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
         request.setValue("model/stl", forHTTPHeaderField: "Accept")
+        if let token {
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
         request.httpBody = form.finalized()
         return request
     }
@@ -75,8 +89,7 @@ struct PrintService {
             throw PrintError.unexpectedResponse("no HTTP response")
         }
         guard (200..<300).contains(http.statusCode) else {
-            let message = String(decoding: data.prefix(300), as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
-            throw PrintError.server(status: http.statusCode, message: message)
+            throw PrintError.server(status: http.statusCode, message: Self.errorMessage(from: data))
         }
         let mimeType = http.mimeType?.lowercased() ?? ""
         guard ["model/stl", "application/sla", "application/vnd.ms-pki.stl", "application/octet-stream"].contains(mimeType) else {
@@ -90,6 +103,18 @@ struct PrintService {
         let url = directory.appendingPathComponent(name).appendingPathExtension("stl")
         try data.write(to: url, options: .atomic)
         return url
+    }
+
+    /// The `detail` of a JSON error body (a string, or a list of `{"msg"}` validation errors), else the body as text.
+    static func errorMessage(from data: Data) -> String {
+        if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+            if let detail = json["detail"] as? String { return detail }
+            if let details = json["detail"] as? [[String: Any]] {
+                let messages = details.compactMap { $0["msg"] as? String }
+                if !messages.isEmpty { return messages.joined(separator: "; ") }
+            }
+        }
+        return String(decoding: data.prefix(300), as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     static var outputDirectory: URL {

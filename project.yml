@@ -23,7 +23,7 @@ targets:
         GENERATE_INFOPLIST_FILE: YES
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
-        PRINT_BASE_URL: http://localhost:8765
+        PRINT_BASE_URL: https://slesvci--3d-print-web.us-east.modal.run
     info:
       path: LidarScanner/Info.plist
       properties:

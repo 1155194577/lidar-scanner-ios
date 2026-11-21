@@ -8,6 +8,7 @@
 
 /* Begin PBXBuildFile section */
 		15A21CE618630EE491C5B685 /* ObjectScanView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 186B1783B50F7042BF77067E /* ObjectScanView.swift */; };
+		2C2970A3478BF16445404766 /* KeychainStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4ADE67AD7F6A66051B9B8B61 /* KeychainStore.swift */; };
 		3395E5F040C5D595887BE822 /* LaunchArguments.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1327490574893FDE679AF73E /* LaunchArguments.swift */; };
 		38B584EEC9A7699DF06A1BA3 /* HomeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DF61EF62F44AF9D1CC4DAEB5 /* HomeView.swift */; };
 		4A92011FA9CC945A746DB9B9 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 54FB452B361CBD769754AC19 /* SettingsView.swift */; };
@@ -17,7 +18,9 @@
 		6A57E1C78638338120EDC3CD /* ScanStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 87F0A168FB8895BC010B38B4 /* ScanStoreTests.swift */; };
 		6F17BE26927A05A6DA0E0B4F /* LidarScannerUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CD0AB86940F3D7F42A85C0A6 /* LidarScannerUITests.swift */; };
 		7205225AFA1B5179CFF21200 /* DeviceSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8BFDFCA721B0D943DB447DC /* DeviceSupport.swift */; };
+		85464DBFEC850BAD6CEABBAA /* SampleCube.usdz in Resources */ = {isa = PBXBuildFile; fileRef = 847C4A0C1369226AF4808EE4 /* SampleCube.usdz */; };
 		8798B9B3B8ED9FD73CE5F592 /* ActivityView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C8407C2985E2FFF7986A9BC4 /* ActivityView.swift */; };
+		96506DE04905D6C3933F26AA /* PhotoPrintView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4030F8493820551CA06FD224 /* PhotoPrintView.swift */; };
 		F358299C9768C7B853CFBC26 /* PrintServiceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3E4B9C6E706A7F0A1044D1D6 /* PrintServiceTests.swift */; };
 		F5E1F4B69A346854F7F23658 /* RoomScanView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2BE16B613004BEB3D632B32 /* RoomScanView.swift */; };
 		F8AC652EAB45CEE69EF26635 /* ScanStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5AEE1F5D3FC4825BDA978F4C /* ScanStore.swift */; };
@@ -47,8 +50,11 @@
 		1327490574893FDE679AF73E /* LaunchArguments.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LaunchArguments.swift; sourceTree = "<group>"; };
 		186B1783B50F7042BF77067E /* ObjectScanView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ObjectScanView.swift; sourceTree = "<group>"; };
 		3E4B9C6E706A7F0A1044D1D6 /* PrintServiceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PrintServiceTests.swift; sourceTree = "<group>"; };
+		4030F8493820551CA06FD224 /* PhotoPrintView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhotoPrintView.swift; sourceTree = "<group>"; };
+		4ADE67AD7F6A66051B9B8B61 /* KeychainStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeychainStore.swift; sourceTree = "<group>"; };
 		54FB452B361CBD769754AC19 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		5AEE1F5D3FC4825BDA978F4C /* ScanStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScanStore.swift; sourceTree = "<group>"; };
+		847C4A0C1369226AF4808EE4 /* SampleCube.usdz */ = {isa = PBXFileReference; lastKnownFileType = file.usdz; path = SampleCube.usdz; sourceTree = "<group>"; };
 		87F0A168FB8895BC010B38B4 /* ScanStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScanStoreTests.swift; sourceTree = "<group>"; };
 		943C6B93CDBEF4C325CA7E88 /* LidarScannerApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LidarScannerApp.swift; sourceTree = "<group>"; };
 		9EEA2B6DD210C068DEE835B6 /* LidarScanner.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = LidarScanner.app; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -87,6 +93,7 @@
 				C8407C2985E2FFF7986A9BC4 /* ActivityView.swift */,
 				DF61EF62F44AF9D1CC4DAEB5 /* HomeView.swift */,
 				186B1783B50F7042BF77067E /* ObjectScanView.swift */,
+				4030F8493820551CA06FD224 /* PhotoPrintView.swift */,
 				B2BE16B613004BEB3D632B32 /* RoomScanView.swift */,
 				A3E8DCDB974B375AADE89EB2 /* ScansListView.swift */,
 				54FB452B361CBD769754AC19 /* SettingsView.swift */,
@@ -98,6 +105,7 @@
 			isa = PBXGroup;
 			children = (
 				B8BFDFCA721B0D943DB447DC /* DeviceSupport.swift */,
+				4ADE67AD7F6A66051B9B8B61 /* KeychainStore.swift */,
 				0948124D94F88A05132C8D1C /* PrintService.swift */,
 				5AEE1F5D3FC4825BDA978F4C /* ScanStore.swift */,
 			);
@@ -111,6 +119,7 @@
 				C789F36D9041AF57FD69D61B /* Info.plist */,
 				D228220DA2F3EDB16B178134 /* App */,
 				6B587BA2A7929107CDCBFB84 /* Model */,
+				B399D8600901CD4181DC9667 /* Resources */,
 				53A3A7F677B2666A3E64090C /* Views */,
 			);
 			path = LidarScanner;
@@ -124,6 +133,14 @@
 				07EE6C86D82B1C9CBE223D48 /* LidarScannerUITests.xctest */,
 			);
 			name = Products;
+			sourceTree = "<group>";
+		};
+		B399D8600901CD4181DC9667 /* Resources */ = {
+			isa = PBXGroup;
+			children = (
+				847C4A0C1369226AF4808EE4 /* SampleCube.usdz */,
+			);
+			path = Resources;
 			sourceTree = "<group>";
 		};
 		D228220DA2F3EDB16B178134 /* App */ = {
@@ -253,6 +270,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				F9E7A58D2EA90D6622BC0111 /* Assets.xcassets in Resources */,
+				85464DBFEC850BAD6CEABBAA /* SampleCube.usdz in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -266,9 +284,11 @@
 				8798B9B3B8ED9FD73CE5F592 /* ActivityView.swift in Sources */,
 				7205225AFA1B5179CFF21200 /* DeviceSupport.swift in Sources */,
 				38B584EEC9A7699DF06A1BA3 /* HomeView.swift in Sources */,
+				2C2970A3478BF16445404766 /* KeychainStore.swift in Sources */,
 				3395E5F040C5D595887BE822 /* LaunchArguments.swift in Sources */,
 				683D19C30B97ACFEF138D529 /* LidarScannerApp.swift in Sources */,
 				15A21CE618630EE491C5B685 /* ObjectScanView.swift in Sources */,
+				96506DE04905D6C3933F26AA /* PhotoPrintView.swift in Sources */,
 				4C5367025D965D1E2158BDC9 /* PrintService.swift in Sources */,
 				F5E1F4B69A346854F7F23658 /* RoomScanView.swift in Sources */,
 				F8AC652EAB45CEE69EF26635 /* ScanStore.swift in Sources */,
@@ -457,7 +477,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				PRINT_BASE_URL = "http://localhost:8765";
+				PRINT_BASE_URL = "https://slesvci--3d-print-web.us-east.modal.run";
 				PRODUCT_BUNDLE_IDENTIFIER = com.lidarscanner.app;
 				SDKROOT = iphoneos;
 				TARGETED_DEVICE_FAMILY = "1,2";
@@ -536,7 +556,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				PRINT_BASE_URL = "http://localhost:8765";
+				PRINT_BASE_URL = "https://slesvci--3d-print-web.us-east.modal.run";
 				PRODUCT_BUNDLE_IDENTIFIER = com.lidarscanner.app;
 				SDKROOT = iphoneos;
 				TARGETED_DEVICE_FAMILY = "1,2";
