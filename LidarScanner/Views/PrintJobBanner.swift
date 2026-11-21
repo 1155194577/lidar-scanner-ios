@@ -86,7 +86,7 @@ private struct PrintJobBannerModifier: ViewModifier {
                         }
                         .padding(8)
                     }
-                    .frame(height: manager.jobs.count > 1 ? 220 : 130)
+                    .frame(height: manager.jobs.count > 1 ? 180 : 96)
                     .accessibilityIdentifier("printJobBanner")
                 }
         }
