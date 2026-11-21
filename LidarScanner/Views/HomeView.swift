@@ -4,7 +4,6 @@ struct HomeView: View {
     @EnvironmentObject private var store: ScanStore
     @State private var activeMode: ScanKind?
     @State private var showsSettings = false
-    @State private var showsPhotoPrint = false
 
     var body: some View {
         NavigationStack {
@@ -27,7 +26,7 @@ struct HomeView: View {
                         title: "Photo Print",
                         subtitle: "One photo plus the object's LiDAR-measured height, turned into a printable STL.",
                         identifier: "photoPrintButton"
-                    ) { showsPhotoPrint = true }
+                    ) { activeMode = .photo }
                 } header: {
                     Text("New Scan")
                 } footer: {
@@ -64,13 +63,6 @@ struct HomeView: View {
             }
         }
         .sheet(isPresented: $showsSettings) { SettingsView() }
-        .fullScreenCover(isPresented: $showsPhotoPrint) {
-            if DeviceSupport.photoPrint {
-                PhotoPrintView()
-            } else {
-                UnsupportedView(feature: "Photo Print", requirement: "an iPhone or iPad with a LiDAR sensor")
-            }
-        }
         .fullScreenCover(item: $activeMode, onDismiss: store.reload) { kind in
             switch kind {
             case .room:
