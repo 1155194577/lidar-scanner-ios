@@ -76,7 +76,7 @@ def upload_filename(name):
 
 
 MESH_TYPES = {"model/vnd.usdz+zip": ".usdz", "model/obj": ".obj", "application/x-ply": ".ply"}
-MODES = ("fail", "expire", "drop", "legacy", "deny", "slow")
+MODES = ("fail", "expire", "drop", "legacy", "deny", "slow", "skipopt")
 UPLOAD_EXPIRES = 900
 
 
@@ -100,7 +100,7 @@ class Uploads:
 
 
 class Job:
-    def __init__(self, job_id, stem, delay, fail_stage, inline_stl):
+    def __init__(self, job_id, stem, delay, fail_stage, inline_stl, report):
         self.id = job_id
         self.stem = stem
         self.condition = threading.Condition()
@@ -109,7 +109,7 @@ class Job:
         self.inline_stl = inline_stl
         self.stl = None
         self.download_slot = {}
-        self.report = {"extents_mm": [20.0, 20.0, 20.0], "watertight": True, "volume_cm3": 8.0}
+        self.report = report
         threading.Thread(target=self.run, args=(delay, fail_stage), daemon=True).start()
 
     def emit(self, event):
@@ -121,8 +121,11 @@ class Job:
 
     def run(self, delay, fail_stage):
         stages = ["upload", "background removal", "TripoSR", "depth fusion", "repair", "export"]
+        if "optimise" in self.report:
+            stages.insert(-1, "optimise")
         for index, stage in enumerate(stages):
-            event = {"type": "progress", "stage": stage, "message": "Processing: " + stage,
+            message = "Removing unloaded material" if stage == "optimise" else "Processing: " + stage
+            event = {"type": "progress", "stage": stage, "message": message,
                      "progress": index / len(stages)}
             self.emit(event)
             remaining = max(0, delay) / len(stages)
@@ -537,6 +540,9 @@ class Handler(BaseHTTPRequestHandler):
             self.log_message("photo check: %s", json.dumps(result))
             return self.reply(200, "application/json", json.dumps(result).encode())
 
+        optimise = parts.get("optimise", (None, b"false"))[1]
+        if optimise not in (b"true", b"false"):
+            return self.error(422, "optimise must be true or false")
         if ("mesh" in parts) == ("photo" in parts):
             return self.error(400, "send exactly one of mesh or photo")
         if "mesh" in parts:
@@ -586,17 +592,24 @@ class Handler(BaseHTTPRequestHandler):
                 stem = "face"
 
         Handler.last_request = {"fields": sorted(parts), "source": source, **upload_summary}
+        if "optimise" in parts:
+            Handler.last_request["optimise"] = optimise == b"true"
         if "photo" in parts:
             Handler.last_request.update(summary)
 
         self.log_message("print request: %s", source)
         report = {"extents_mm": [20.0, 20.0, 20.0], "watertight": True, "volume_cm3": 8.0}
+        if optimise == b"true":
+            report["optimise"] = (
+                {"skipped": "No material could be safely removed."} if "skipopt" in modes else
+                {"volume_saved_pct": 20.0, "volume_cm3_before": 10.0, "volume_cm3_after": 8.0}
+            )
         if "application/x-ndjson" in self.headers.get("Accept", ""):
             job_id = parts.get("job_id", (None, b""))[1].decode() or str(uuid.uuid4())
             fail_stage = self.fail_stage or ("repair" if "fail" in modes else None)
             with self.jobs_lock:
                 if job_id not in self.jobs:
-                    self.jobs[job_id] = Job(job_id, stem, self.delay, fail_stage, bool(modes.intersection(("compat", "legacy"))))
+                    self.jobs[job_id] = Job(job_id, stem, self.delay, fail_stage, bool(modes.intersection(("compat", "legacy"))), report)
                 job = self.jobs[job_id]
             return self.stream(job)
         time.sleep(self.delay)

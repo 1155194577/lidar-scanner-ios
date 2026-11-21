@@ -253,6 +253,65 @@ final class LidarScannerUITests: XCTestCase {
         XCTAssertFalse(app.alerts["Couldn't print scan"].exists)
     }
 
+    func testObjectPrintCanOptInToMaterialSavings() throws {
+        try requirePrintStub()
+        let app = launch(["-UITestSeedSampleScans", "-printBaseURL", Self.stubURL, "-printAPIToken", Self.stubToken])
+        enableMaterialSavings(in: app, takeScreenshot: true)
+        defer { app.terminate(); disableMaterialSavings() }
+
+        openMyScans(in: app)
+        let printButton = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'print-Object '")).firstMatch
+        XCTAssertTrue(printButton.waitForExistence(timeout: 5))
+        printButton.tap()
+        openPrintResult(in: app, timeout: 30)
+        let result = app.staticTexts["printOptimisationSummary"]
+        XCTAssertTrue(result.waitForExistence(timeout: 5))
+        XCTAssertTrue(result.label.contains("less model volume"))
+        savePrintScreenshot("material-savings-result", app: app)
+
+        let received = try lastStubRequest()
+        XCTAssertEqual(received["optimise"] as? Bool, true)
+        XCTAssertEqual(received["uploaded"] as? [String], ["mesh"])
+    }
+
+    func testMultipartPhotoPrintExplainsSkippedOptimisation() throws {
+        try requirePrintStub()
+        let app = launch(["-UITestFakePhotoCapture", "-UITestFakePitch", "5", "-printBaseURL", Self.stubHost + "/legacy-skipopt", "-printAPIToken", Self.stubToken])
+        enableMaterialSavings(in: app)
+        defer { app.terminate(); disableMaterialSavings() }
+
+        app.buttons["photoPrintButton"].tap()
+        let capture = app.buttons["takePhotoAndPrintButton"]
+        XCTAssertTrue(capture.waitForExistence(timeout: 5))
+        capture.tap()
+        openPrintResult(in: app, timeout: 30)
+        let result = app.staticTexts["printOptimisationSummary"]
+        XCTAssertTrue(result.waitForExistence(timeout: 5))
+        XCTAssertEqual(result.label, "Skipped: No material could be safely removed.")
+
+        let received = try lastStubRequest()
+        XCTAssertEqual(received["optimise"] as? Bool, true)
+        XCTAssertNil(received["uploaded"])
+    }
+
+    private func enableMaterialSavings(in app: XCUIApplication, takeScreenshot: Bool = false) {
+        app.buttons["settingsButton"].tap()
+        let toggle = app.switches["printOptimiseToggle"]
+        XCTAssertTrue(toggle.waitForExistence(timeout: 5))
+        XCTAssertEqual(toggle.value as? String, "0")
+        toggle.tap()
+        XCTAssertEqual(toggle.value as? String, "1")
+        if takeScreenshot { savePrintScreenshot("material-savings-setting", app: app) }
+        app.buttons["settingsDoneButton"].tap()
+    }
+
+    private func disableMaterialSavings() {
+        let app = launch()
+        app.buttons["settingsButton"].tap()
+        let toggle = app.switches["printOptimiseToggle"]
+        if toggle.value as? String == "1" { toggle.tap() }
+    }
+
     func testPrintSavesSTLWithItsSourceScan() throws {
         try requirePrintStub()
         let app = launch(["-UITestSeedSampleScans", "-printBaseURL", Self.stubURL, "-printAPIToken", Self.stubToken])

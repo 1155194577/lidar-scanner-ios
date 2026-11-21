@@ -8,6 +8,34 @@ struct PrintProgress: Equatable, Codable {
     static let uploading = PrintProgress(stage: "uploading", message: "Uploading to print server", progress: 0)
 }
 
+struct PrintOptimisation: Codable, Equatable {
+    let volumeSavedPct: Double?
+    let volumeCm3Before: Double?
+    let volumeCm3After: Double?
+    let skipped: String?
+
+    private enum CodingKeys: String, CodingKey {
+        case volumeSavedPct = "volume_saved_pct"
+        case volumeCm3Before = "volume_cm3_before"
+        case volumeCm3After = "volume_cm3_after"
+        case skipped
+    }
+}
+
+struct PrintReport: Decodable {
+    let optimise: PrintOptimisation?
+
+    static func optimisation(in response: HTTPURLResponse) -> PrintOptimisation? {
+        guard let report = response.value(forHTTPHeaderField: "X-Print-Report") else { return nil }
+        return (try? JSONDecoder().decode(Self.self, from: Data(report.utf8)))?.optimise
+    }
+}
+
+struct PrintOutput {
+    let url: URL
+    var optimisation: PrintOptimisation? = nil
+}
+
 /// What gets sent to the print endpoint: a scan's mesh, a single photo plus the LiDAR-measured object height, or a TrueDepth face for a bust.
 enum PrintInput {
     case mesh(URL)
@@ -72,6 +100,7 @@ enum PrintError: LocalizedError, Equatable {
 struct PrintService {
     static let baseURLKey = "printBaseURL"
     static let tokenKey = "printAPIToken"
+    static let optimiseKey = "printOptimise"
 
     static var defaultBaseURL: String {
         (Bundle.main.object(forInfoDictionaryKey: "PrintBaseURL") as? String).flatMap { $0.isEmpty ? nil : $0 }
@@ -150,7 +179,7 @@ struct PrintService {
     /// The input's form fields and files, in the order the multipart POST sends them.
     func payload(for input: PrintInput) throws -> PrintPayload { try Self.payload(for: input) }
 
-    static func payload(for input: PrintInput) throws -> PrintPayload {
+    static func payload(for input: PrintInput, optimise: Bool = false) throws -> PrintPayload {
         var form = PrintPayload()
         switch input {
         case .mesh(let url):
@@ -168,6 +197,7 @@ struct PrintService {
         case .face(let capture):
             try capture.addFields(to: &form)
         }
+        if optimise { form.addField(name: "optimise", value: "true") }
         return form
     }
 
@@ -213,13 +243,13 @@ struct PrintService {
                     onProgress: @escaping @Sendable (PrintProgress) -> Void = { _ in },
                     onAccepted: @escaping @Sendable (String) -> Void = { _ in }) async throws -> URL {
         try await requestSTL(for: try payload(for: input), name: name, in: directory, jobID: jobID, uploads: uploads,
-                             onProgress: onProgress, onAccepted: onAccepted)
+                             onProgress: onProgress, onAccepted: onAccepted).url
     }
 
     func requestSTL(for payload: PrintPayload, name: String, in directory: URL = PrintService.outputDirectory,
                     jobID: String? = nil, uploads: PrintUploadState? = nil,
                     onProgress: @escaping @Sendable (PrintProgress) -> Void = { _ in },
-                    onAccepted: @escaping @Sendable (String) -> Void = { _ in }) async throws -> URL {
+                    onAccepted: @escaping @Sendable (String) -> Void = { _ in }) async throws -> PrintOutput {
         let state = uploads ?? PrintUploadState()
         guard signedUploads, let jobID, !state.legacy else {
             return try await receive(makeRequest(for: payload, jobID: jobID), name: name, in: directory, onProgress: onProgress, onAccepted: onAccepted)
@@ -402,13 +432,13 @@ struct PrintService {
     }
 
     func reattach(id: String, name: String, in directory: URL = PrintService.outputDirectory,
-                  onProgress: @escaping @Sendable (PrintProgress) -> Void = { _ in }) async throws -> URL {
+                  onProgress: @escaping @Sendable (PrintProgress) -> Void = { _ in }) async throws -> PrintOutput {
         try await receive(jobRequest(id: id), name: name, in: directory, onProgress: onProgress, onAccepted: { _ in })
     }
 
     private func receive(_ request: URLRequest, name: String, in directory: URL,
                          onProgress: @escaping @Sendable (PrintProgress) -> Void,
-                         onAccepted: @escaping @Sendable (String) -> Void) async throws -> URL {
+                         onAccepted: @escaping @Sendable (String) -> Void) async throws -> PrintOutput {
         let transfer = PrintTransfer(configuration: session.configuration, stallTimeout: stallTimeout, onProgress: onProgress, onAccepted: onAccepted)
         let result = try await withTaskCancellationHandler {
             try await transfer.run(request)
@@ -418,17 +448,20 @@ struct PrintService {
 
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let url = directory.appendingPathComponent(name).appendingPathExtension("stl")
+        let optimisation: PrintOptimisation?
         switch result {
-        case .bytes(let data):
+        case .bytes(let data, let report):
             try data.write(to: url, options: .atomic)
-        case .remote(let signedURL):
+            optimisation = report
+        case .remote(let signedURL, let report):
             let (data, response) = try await session.data(from: signedURL)
             guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode), !data.isEmpty else {
                 throw PrintError.server(status: (response as? HTTPURLResponse)?.statusCode ?? 0, message: "Couldn't download STL from storage")
             }
             try data.write(to: url, options: .atomic)
+            optimisation = report
         }
-        return url
+        return PrintOutput(url: url, optimisation: optimisation)
     }
 
     /// Photo + depth fusion fields: `depth` (float32 LE metres), `depth_confidence` (uint8), `depth_width`, `depth_height`,
@@ -483,8 +516,8 @@ struct PrintService {
 
 private final class PrintTransfer: NSObject, URLSessionDataDelegate, @unchecked Sendable {
     enum Output {
-        case bytes(Data)
-        case remote(URL)
+        case bytes(Data, PrintOptimisation?)
+        case remote(URL, PrintOptimisation?)
     }
     private let queue = DispatchQueue(label: "PrintTransfer")
     private let configuration: URLSessionConfiguration
@@ -607,17 +640,19 @@ private final class PrintTransfer: NSObject, URLSessionDataDelegate, @unchecked 
             case "error":
                 finish(.failure(PrintError.jobFailed(event.detail ?? "Printing failed")))
             case "done":
+                struct DoneReport: Decodable { let report: PrintReport? }
+                let optimisation = (try? JSONDecoder().decode(DoneReport.self, from: line))?.report?.optimise
                 if let url = event.stl_url {
                     guard ["http", "https"].contains(url.scheme?.lowercased() ?? ""), url.host != nil else {
                         throw PrintError.unexpectedResponse("invalid STL download URL")
                     }
-                    finish(.success(.remote(url)))
+                    finish(.success(.remote(url, optimisation)))
                     return
                 }
                 guard let encoded = event.stl_base64, let data = Data(base64Encoded: encoded), !data.isEmpty else {
                     throw PrintError.unexpectedResponse("missing or invalid STL data")
                 }
-                finish(.success(.bytes(data)))
+                finish(.success(.bytes(data, optimisation)))
             default: break
             }
         } catch { finish(.failure(error)) }
@@ -639,7 +674,7 @@ private final class PrintTransfer: NSObject, URLSessionDataDelegate, @unchecked 
             finish(.failure(PrintError.unexpectedResponse(response.mimeType ?? "no content type")))
         } else if buffer.isEmpty {
             finish(.failure(PrintError.unexpectedResponse("empty body")))
-        } else { finish(.success(.bytes(buffer))) }
+        } else { finish(.success(.bytes(buffer, PrintReport.optimisation(in: response)))) }
     }
 }
 

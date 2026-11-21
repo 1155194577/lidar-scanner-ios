@@ -58,6 +58,52 @@ final class PrintServiceTests: XCTestCase {
         XCTAssertFalse(body.contains("name=\"mesh\""))
     }
 
+    func testOptimisationIsOptInAndOnlySentOnFinalSubmit() throws {
+        let client = try PrintService(baseURL: "http://localhost:8765")
+        let input = PrintInput.photo(Data("jpeg".utf8), heightMM: 120)
+        let unoptimised = try client.makeRequest(for: input)
+        XCTAssertFalse(String(decoding: try XCTUnwrap(unoptimised.httpBody), as: UTF8.self).contains("optimise"))
+
+        let payload = try PrintService.payload(for: input, optimise: true)
+        let persisted = directory.appendingPathComponent("payload")
+        try payload.save(to: persisted)
+        let restored = try PrintPayload.load(from: persisted)
+        let inline = client.makeRequest(for: restored)
+        let signed = client.makeSubmitRequest(for: restored, jobID: "job")
+        for request in [inline, signed] {
+            XCTAssertTrue(String(decoding: try XCTUnwrap(request.httpBody), as: UTF8.self).contains("name=\"optimise\"\r\n\r\ntrue\r\n"))
+        }
+        let uploads = try client.makeUploadsRequest(jobID: "job", files: restored.files)
+        XCTAssertFalse(String(decoding: try XCTUnwrap(uploads.httpBody), as: UTF8.self).contains("optimise"))
+    }
+
+    func testOptimisationStageAndReplayReportAreDecoded() async throws {
+        let lines = [
+            #"{"type":"progress","stage":"optimise","message":"Removing unloaded material","progress":0.75}"#,
+            #"{"type":"done","stl_base64":"c3Rs","report":{"optimise":{"volume_saved_pct":20,"volume_cm3_before":10,"volume_cm3_after":8}}}"#
+        ]
+        StubProtocol.handler = { _ in (200, "application/x-ndjson", Data(lines.joined(separator: "\n").utf8)) }
+        let observed = expectation(description: "optimise progress")
+        let output = try await service().reattach(id: "job", name: "result", in: directory) { progress in
+            if progress.stage == "optimise" {
+                XCTAssertEqual(progress.message, "Removing unloaded material")
+                observed.fulfill()
+            }
+        }
+        XCTAssertEqual(output.optimisation, PrintOptimisation(volumeSavedPct: 20, volumeCm3Before: 10, volumeCm3After: 8, skipped: nil))
+        XCTAssertEqual(try Data(contentsOf: output.url), Data("stl".utf8))
+        await fulfillment(of: [observed], timeout: 1)
+    }
+
+    func testInvalidOptionalReportDoesNotDiscardTheSTL() async throws {
+        StubProtocol.handler = { _ in
+            (200, "application/x-ndjson", Data(#"{"type":"done","stl_base64":"c3Rs","report":{"optimise":{"volume_saved_pct":"unknown"}}}"#.utf8))
+        }
+        let output = try await service().reattach(id: "job", name: "result", in: directory)
+        XCTAssertNil(output.optimisation)
+        XCTAssertEqual(try Data(contentsOf: output.url), Data("stl".utf8))
+    }
+
     func testPhotoWithDepthSendsFusionFields() throws {
         let depth = DepthCapture(
             depth: [0.5, .nan],
@@ -350,7 +396,7 @@ final class PrintServiceTests: XCTestCase {
         XCTAssertNil(manager.jobs.first?.error)
         let file = directory.appendingPathComponent("concurrent.stl")
         try Data("stl".utf8).write(to: file)
-        manager.complete(id: job.id, result: .success(file))
+        manager.complete(id: job.id, result: .success(PrintOutput(url: file)))
         XCTAssertNotNil(manager.jobs.first?.result)
         manager.dismiss(manager.jobs[0])
     }
@@ -446,7 +492,7 @@ final class PrintServiceTests: XCTestCase {
         try FileManager.default.createDirectory(at: PrintJobManager.directory, withIntermediateDirectories: true)
         let raw = PrintJobManager.directory.appendingPathComponent(job.id).appendingPathExtension("stl")
         try Data("stl".utf8).write(to: raw)
-        manager.complete(id: job.id, result: .success(raw))
+        manager.complete(id: job.id, result: .success(PrintOutput(url: raw)))
         let result = try XCTUnwrap(manager.jobs.first?.result)
         XCTAssertTrue(FileManager.default.fileExists(atPath: result.path))
         XCTAssertFalse(FileManager.default.fileExists(atPath: raw.path))
@@ -454,7 +500,7 @@ final class PrintServiceTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: result.deletingLastPathComponent().path))
         XCTAssertFalse(FileManager.default.fileExists(atPath: raw.path))
         try Data("late download".utf8).write(to: raw)
-        manager.complete(id: job.id, result: .success(raw), source: .download)
+        manager.complete(id: job.id, result: .success(PrintOutput(url: raw)), source: .download)
         XCTAssertFalse(FileManager.default.fileExists(atPath: raw.path))
     }
 
@@ -782,10 +828,13 @@ final class PrintServiceTests: XCTestCase {
         let file = directory.appendingPathComponent("download")
         let url = URL(string: "http://print.test/result")!
         try Data("solid cube".utf8).write(to: file)
-        let response = HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: ["Content-Type": "model/stl"])!
+        let response = HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: [
+            "Content-Type": "model/stl", "X-Print-Report": #"{"optimise":{"skipped":"Too thin"}}"#
+        ])!
         let saved = try PrintBackgroundDownload.saveResponse(response, file: file, id: UUID().uuidString)
-        XCTAssertEqual(try Data(contentsOf: saved), Data("solid cube".utf8))
-        try? FileManager.default.removeItem(at: saved)
+        XCTAssertEqual(try Data(contentsOf: saved.url), Data("solid cube".utf8))
+        XCTAssertEqual(saved.optimisation?.skipped, "Too thin")
+        try? FileManager.default.removeItem(at: saved.url)
         try Data(#"{"detail":"repair failed"}"#.utf8).write(to: file)
         let failure = HTTPURLResponse(url: url, statusCode: 500, httpVersion: nil, headerFields: ["Content-Type": "application/json"])!
         XCTAssertThrowsError(try PrintBackgroundDownload.saveResponse(failure, file: file, id: "failed")) { error in
@@ -813,7 +862,7 @@ final class PrintServiceTests: XCTestCase {
             XCTAssertEqual(job.sourceScanFileName, scan.url.lastPathComponent)
             let source = directory.appendingPathComponent("received.stl")
             try Data("printed mesh".utf8).write(to: source)
-            restored.complete(id: job.id, result: .success(source), source: transfer)
+            restored.complete(id: job.id, result: .success(PrintOutput(url: source)), source: transfer)
             let model = try XCTUnwrap(restored.printedModel(for: restored.jobs[0]))
             try model.save(in: store)
             let saved = try XCTUnwrap(store.scans.first(where: { $0.id == scan.id })?.printedSTLURL)
@@ -838,7 +887,7 @@ final class PrintServiceTests: XCTestCase {
             let job = try XCTUnwrap(restored.jobs.first)
             let source = directory.appendingPathComponent("received.stl")
             try Data("photo mesh".utf8).write(to: source)
-            restored.complete(id: job.id, result: .success(source), source: transfer)
+            restored.complete(id: job.id, result: .success(PrintOutput(url: source)), source: transfer)
             let model = try XCTUnwrap(restored.printedModel(for: restored.jobs[0]))
             XCTAssertNil(model.sourceScanFileName)
             try model.save(in: store)

@@ -140,7 +140,7 @@ struct ScansListView: View {
     }
 
     private func startPrint(_ scan: ScanFile) {
-        printJobs.start(input: .mesh(scan.url), name: scan.name, kind: "scan")
+        printJobs.start(input: .mesh(scan.url), name: scan.name, kind: "scan", allowsOptimisation: scan.kind == .object)
     }
 
     private func delete(_ scans: [ScanFile]) {
