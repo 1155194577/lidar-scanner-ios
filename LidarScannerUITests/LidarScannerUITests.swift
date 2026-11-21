@@ -472,6 +472,7 @@ final class LidarScannerUITests: XCTestCase {
 
         app.launchArguments = arguments
         app.launch()
+        if allowNotifications.waitForExistence(timeout: 10) { allowNotifications.tap() }
         XCTAssertTrue(app.images["uploadedPhotoPreview"].waitForExistence(timeout: 60), "the relaunched print did not finish uploading")
         XCTAssertFalse(app.staticTexts.containing(NSPredicate(format: "label CONTAINS 'Lost contact'")).firstMatch.exists)
         app.buttons["confirmS3Print"].tap()
