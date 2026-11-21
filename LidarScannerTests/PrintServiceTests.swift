@@ -270,6 +270,36 @@ final class PrintServiceTests: XCTestCase {
         manager.dismiss(manager.jobs[0])
     }
 
+    @MainActor
+    func testRetryUnacceptedJobUsesCurrentServerAndFreshID() async throws {
+        let previous = UserDefaults.standard.object(forKey: PrintService.baseURLKey)
+        defer { UserDefaults.standard.set(previous, forKey: PrintService.baseURLKey) }
+        UserDefaults.standard.set("bad-url", forKey: PrintService.baseURLKey)
+        let suite = "PrintJobs-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let manager = PrintJobManager(defaults: defaults, notifications: false, makeService: { job in
+            if job.baseURL == "bad-url" { throw PrintError.invalidBaseURL(job.baseURL) }
+            XCTAssertEqual(job.baseURL, "http://print.test")
+            return try self.service()
+        })
+        manager.start(input: .photo(Data([1]), heightMM: 10), name: "Retry", kind: "photo")
+        let failed = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in manager.jobs.first?.error != nil }, object: nil)
+        await fulfillment(of: [failed], timeout: 2)
+        let old = try XCTUnwrap(manager.jobs.first)
+        UserDefaults.standard.set("http://print.test", forKey: PrintService.baseURLKey)
+        StubProtocol.handler = { request in
+            XCTAssertEqual(request.httpMethod, "POST")
+            return (200, "model/stl", Data("stl".utf8))
+        }
+        manager.retry(old)
+        XCTAssertNotEqual(manager.jobs.first?.id, old.id)
+        let ready = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in manager.jobs.first?.result != nil }, object: nil)
+        await fulfillment(of: [ready], timeout: 2)
+        XCTAssertNil(manager.jobs.first?.error)
+        manager.dismiss(manager.jobs[0])
+    }
+
     func testPersistedResultUsesRelativePathAndMigratesOldContainer() throws {
         let legacy = #"{"id":"job","name":"Cube","kind":"photo","baseURL":"http://print.test","result":"file:///old-container/Library/Application%20Support/PrintJobs/job/Cube.stl"}"#
         let job = try JSONDecoder().decode(PrintJob.self, from: Data(legacy.utf8))

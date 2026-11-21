@@ -96,7 +96,14 @@ final class PrintJobManager: ObservableObject {
     }
 
     func retry(_ job: PrintJob) {
-        if job.retryFromStart, let input = inputs[job.id] {
+        if job.retryFromStart || !job.accepted {
+            guard let input = inputs[job.id] else {
+                if let index = jobs.firstIndex(where: { $0.id == job.id }) {
+                    jobs[index].error = "Original print input is no longer available; print again."
+                    persist()
+                }
+                return
+            }
             dismiss(job)
             start(input: input, name: job.name, kind: job.kind)
             return
@@ -175,6 +182,7 @@ final class PrintJobManager: ObservableObject {
                     if Task.isCancelled { return }
                     lastError = error
                     if case PrintError.serverChanged = error { break }
+                    if case PrintError.invalidBaseURL = error { break }
                     if case PrintError.jobFailed = error { break }
                     if case PrintError.server(let status, _) = error, status != 404 && status != 200 { break }
                     if case PrintError.server(200, let detail) = error, !detail.contains("Lost contact") { break }
@@ -232,6 +240,7 @@ final class PrintJobManager: ObservableObject {
         case .failure(let error):
             jobs[index].error = error.localizedDescription
             if case PrintError.jobFailed = error { jobs[index].retryFromStart = true }
+            if case PrintError.invalidBaseURL = error { jobs[index].retryFromStart = true }
             if case PrintError.server(let status, _) = error, status != 404 { jobs[index].retryFromStart = true }
         }
         persist()
