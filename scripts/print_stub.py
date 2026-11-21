@@ -28,7 +28,8 @@ the stored STL. /compat uses the older signed-upload response and inline STL. PO
 {"detail": "upload missing: depth", "missing": ["depth"]}. Test modes go in front of the base path,
 joined by "-": /fail (job errors at repair), /expire (each job's first URL per file is already expired),
 /drop (the first submit of each job reports its first file missing), /legacy (no /print/uploads: 405),
-/deny (every PUT is refused 403 AccessDenied, like a bucket without an IAM policy).
+/deny (every PUT is refused 403 AccessDenied, like a bucket without an IAM policy),
+/slow (every PUT takes 4 s, so a test can quit the app mid-upload).
 
 POST /photo-check takes `photo` plus optional `camera_transform` and answers
 `{ok, issues: [{code, message}], camera_pitch_deg, angle_checked, max_pitch_deg}`; like the
@@ -55,7 +56,7 @@ UPLOAD_NAMES = ("mesh", "photo", "depth", "depth_confidence", "face_vertices")
 UPLOAD_FILENAMES = {"photo": "photo.jpg", "depth": "depth.f32", "depth_confidence": "confidence.u8",
                     "face_vertices": "face_vertices.f32"}
 MESH_TYPES = {"model/vnd.usdz+zip": ".usdz", "model/obj": ".obj", "application/x-ply": ".ply"}
-MODES = ("fail", "expire", "drop", "legacy", "deny")
+MODES = ("fail", "expire", "drop", "legacy", "deny", "slow")
 UPLOAD_EXPIRES = 900
 
 
@@ -75,6 +76,7 @@ class Uploads:
         self.stats = {"url_requests": 0, "puts": 0, "rejected_puts": 0, "conflicts": 0}
         self.dropped = False
         self.denied = False
+        self.slow = False
 
 
 class Job:
@@ -371,6 +373,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self.s3_error(uploads, *refusal)
             return self.reply(400, "application/xml", b"<Error><Code>IncompleteBody</Code><Message>size differs from the declared size</Message></Error>")
         body = self.rfile.read(length)
+        if uploads.slow:
+            time.sleep(4)
         with self.jobs_lock:
             uploads.files[name] = (slot["content_type"], body)
             uploads.stats["puts"] += 1
@@ -400,6 +404,7 @@ class Handler(BaseHTTPRequestHandler):
             uploads = self.uploads.setdefault(job_id, Uploads())
             uploads.stats["url_requests"] += 1
             uploads.denied = "deny" in modes
+            uploads.slow = "slow" in modes
             for name, spec in files.items():
                 if name not in UPLOAD_NAMES:
                     return self.error(422, "unknown upload " + name)

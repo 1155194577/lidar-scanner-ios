@@ -485,6 +485,103 @@ final class PrintServiceTests: XCTestCase {
     }
 
     @MainActor
+    func testPayloadSurvivesSaveAndLoad() throws {
+        var payload = PrintPayload()
+        payload.addFile(name: "photo", fileName: "photo.jpg", contentType: "image/jpeg", data: Data("jpeg".utf8))
+        payload.addField(name: "height_mm", value: "10.0")
+        payload.addFile(name: "depth", fileName: "depth.bin", contentType: "application/octet-stream", data: Data([1, 2, 3]))
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        try payload.save(to: folder)
+        let loaded = try PrintPayload.load(from: folder)
+        XCTAssertEqual(loaded.files, payload.files)
+        XCTAssertEqual(loaded.fields.map(\.name), ["height_mm"])
+        XCTAssertEqual(loaded.fields.map(\.value), ["10.0"])
+    }
+
+    func testUploadStateIsKeptOnDisk() {
+        let file = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).appendingPathComponent("state.json")
+        defer { try? FileManager.default.removeItem(at: file.deletingLastPathComponent()) }
+        let state = PrintUploadState(file: file)
+        state.markUploaded("photo")
+        state.markUploaded("depth")
+        state.forget(["depth"])
+        XCTAssertEqual(PrintUploadState(file: file).uploadedNames, ["photo"])
+        state.legacy = true
+        XCTAssertTrue(PrintUploadState(file: file).legacy)
+    }
+
+    @MainActor
+    func testRelaunchedPrintNotYetAcceptedSendsStepThree() async throws {
+        let suite = "PrintJobs-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let first = PrintJobManager(defaults: defaults, notifications: false, makeService: { _, _ in throw PrintError.serverChanged })
+        first.start(input: .photo(Data("jpeg".utf8), heightMM: 10), name: "Relaunched", kind: "photo")
+        let stopped = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in first.jobs.first?.error != nil }, object: nil)
+        await fulfillment(of: [stopped], timeout: 2)
+        let id = try XCTUnwrap(first.jobs.first?.id)
+        var job = try XCTUnwrap(first.jobs.first)
+        job.error = nil
+        job.progress = .uploading
+        defaults.set(try JSONEncoder().encode([job]), forKey: "printJobs")
+        // A signed PUT that iOS finished while the app was not running.
+        PrintUploadState.forJob(id, in: PrintJobManager.directory).markUploaded("photo")
+        PrintUploadState.discard(id)
+
+        let uploader = FakeUploader()
+        var calls: [String] = []
+        StubProtocol.handler = { request in
+            calls.append((request.httpMethod ?? "") + " " + request.url!.path)
+            let body = String(decoding: Self.body(of: request), as: UTF8.self)
+            XCTAssertTrue(body.contains("name=\"uploaded\"\r\n\r\nphoto\r\n"))
+            XCTAssertTrue(body.contains("name=\"job_id\"\r\n\r\n\(id)\r\n"))
+            XCTAssertFalse(body.contains("filename="))
+            return (200, "model/stl", Data("stl".utf8))
+        }
+        let restored = PrintJobManager(defaults: defaults, notifications: false, makeService: { _, _ in
+            try self.service(signedUploads: true, uploader: uploader)
+        }, authorize: {})
+        restored.resumeUnaccepted()
+        let ready = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in restored.jobs.first?.result != nil }, object: nil)
+        await fulfillment(of: [ready], timeout: 4)
+        XCTAssertEqual(calls, ["POST /print"])
+        XCTAssertTrue(uploader.puts.isEmpty)
+        restored.dismiss(restored.jobs[0])
+    }
+
+    @MainActor
+    func testRelaunchedPrintNeedingAFreshJobRetriesFromTheSavedPayload() async throws {
+        let suite = "PrintJobs-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        StubProtocol.handler = { _ in (400, "application/json", Data(#"{"detail":"bad photo"}"#.utf8)) }
+        let first = PrintJobManager(defaults: defaults, notifications: false, makeService: { _, _ in try self.service() }, authorize: {})
+        first.start(input: .photo(Data("jpeg".utf8), heightMM: 10), name: "Rejected", kind: "photo")
+        let failed = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in first.jobs.first?.rejected == true }, object: nil)
+        await fulfillment(of: [failed], timeout: 2)
+        var job = try XCTUnwrap(first.jobs.first)
+        job.retryFromStart = true
+        defaults.set(try JSONEncoder().encode([job]), forKey: "printJobs")
+
+        var bodies: [String] = []
+        StubProtocol.handler = { request in
+            bodies.append(String(decoding: Self.body(of: request), as: UTF8.self))
+            return (200, "model/stl", Data("stl".utf8))
+        }
+        let restored = PrintJobManager(defaults: defaults, notifications: false, makeService: { _, _ in try self.service() }, authorize: {})
+        let restoredJob = try XCTUnwrap(restored.jobs.first)
+        XCTAssertTrue(restored.canRetry(restoredJob))
+        restored.retry(restoredJob)
+        let ready = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in restored.jobs.first?.result != nil }, object: nil)
+        await fulfillment(of: [ready], timeout: 4)
+        XCTAssertNotEqual(restored.jobs.first?.id, job.id)
+        XCTAssertEqual(bodies.count, 1)
+        XCTAssertTrue(bodies[0].contains("name=\"photo\"; filename=\"photo.jpg\""))
+        restored.dismiss(restored.jobs[0])
+    }
+
+    @MainActor
     func testUploadFailingBeforeAcceptanceIsResentNotReattached() async throws {
         let suite = "PrintJobs-\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suite)!
@@ -590,7 +687,7 @@ final class PrintServiceTests: XCTestCase {
     }
 
     @MainActor
-    func testRejectedJobWithoutInputOffersNoRetryAfterRelaunch() async throws {
+    func testRejectedJobWithoutSavedPayloadOffersNoRetryAfterRelaunch() async throws {
         let suite = "PrintJobs-\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suite)!
         defer { defaults.removePersistentDomain(forName: suite) }
@@ -607,6 +704,7 @@ final class PrintServiceTests: XCTestCase {
         XCTAssertTrue(job.rejected)
         XCTAssertEqual(job.error, "The print server returned HTTP 400: bad face upload")
         XCTAssertTrue(manager.canRetry(job))
+        try FileManager.default.removeItem(at: PrintJobManager.directory.appendingPathComponent(job.id).appendingPathComponent("payload"))
 
         let restored = PrintJobManager(defaults: defaults, notifications: false, makeService: { _, _ in try self.service() })
         let restoredJob = try XCTUnwrap(restored.jobs.first)

@@ -72,7 +72,7 @@ final class PrintJobManager: ObservableObject {
     private var shownUploads = Set<String>()
     private var shownResults = Set<String>()
     private var inputs: [String: PrintInput] = [:]
-    private var uploads: [String: PrintUploadState] = [:]
+    private var payloads: [String: PrintPayload] = [:]
     private var tasks: [String: Task<Void, Never>] = [:]
     private var downloads = Set<String>()
     private var tokens: [String: String] = [:]
@@ -92,10 +92,17 @@ final class PrintJobManager: ObservableObject {
         self.currentToken = currentToken
         self.authorize = authorize
         self.notify = notify
-        if defaults == .standard, LaunchArguments.contains(LaunchArguments.resetScans) { defaults.removeObject(forKey: "printJobs") }
+        if defaults == .standard, LaunchArguments.contains(LaunchArguments.resetScans) {
+            for key in ["printJobs", "printUploadConfirmations", "printConfirmedJobs"] { defaults.removeObject(forKey: key) }
+        }
         if let data = defaults.data(forKey: "printJobs"), let saved = try? JSONDecoder().decode([PrintJob].self, from: data) {
             jobs = saved
         }
+        if let data = defaults.data(forKey: "printUploadConfirmations"),
+           let saved = try? JSONDecoder().decode([String: [String: PrintService.UploadReference]].self, from: data) {
+            uploadConfirmations = saved.filter { id, _ in jobs.contains { $0.id == id } }
+        }
+        confirmedJobs = Set((defaults.stringArray(forKey: "printConfirmedJobs") ?? []).filter { id in jobs.contains { $0.id == id } })
     }
 
     nonisolated static var directory: URL {
@@ -103,19 +110,54 @@ final class PrintJobManager: ObservableObject {
     }
 
     func start(input: PrintInput, name: String, kind: String) {
+        var sourceScanFileName: String?
+        if case .mesh(let url) = input { sourceScanFileName = url.lastPathComponent }
+        start(payload: try? PrintService.payload(for: input), input: input, name: name, kind: kind, sourceScanFileName: sourceScanFileName)
+    }
+
+    private func start(payload: PrintPayload?, input: PrintInput?, name: String, kind: String, sourceScanFileName: String?) {
         var job = PrintJob(id: UUID().uuidString, name: name, kind: kind, baseURL: PrintService.configuredBaseURL)
-        if case .mesh(let url) = input { job.sourceScanFileName = url.lastPathComponent }
+        job.sourceScanFileName = sourceScanFileName
         jobs.append(job)
         inputs[job.id] = input
-        uploads[job.id] = PrintUploadState()
+        if let payload {
+            payloads[job.id] = payload
+            try? payload.save(to: Self.payloadFolder(job.id))
+        }
         tokens[job.id] = currentToken()
         persist()
         run(job, submit: true)
     }
 
+    private static func payloadFolder(_ id: String) -> URL {
+        directory.appendingPathComponent(id, isDirectory: true).appendingPathComponent("payload", isDirectory: true)
+    }
+
+    /// What step 3 (or the multipart POST) sends for the job, read back from disk after a relaunch.
+    private func payload(for id: String) -> PrintPayload? {
+        if let payload = payloads[id] { return payload }
+        guard let payload = try? PrintPayload.load(from: Self.payloadFolder(id)) else { return nil }
+        payloads[id] = payload
+        return payload
+    }
+
+    /// Sends prints that were never accepted, e.g. after iOS relaunched the app for signed uploads that finished.
+    func resumeUnaccepted() {
+        if !active, backgroundTask == .invalid {
+            backgroundTask = UIApplication.shared.beginBackgroundTask(withName: "Print stream") { [weak self] in
+                Task { @MainActor in self?.endBackgroundTask() }
+            }
+        }
+        for job in jobs where !job.isFinished && !job.accepted && tasks[job.id] == nil && uploadConfirmations[job.id] == nil
+            && payload(for: job.id) != nil {
+            run(job, submit: true)
+        }
+    }
+
     func canRetry(_ job: PrintJob) -> Bool {
-        if job.rejected && inputs[job.id] == nil { return false }
-        return !(job.retryFromStart || job.baseURL != PrintService.configuredBaseURL) || inputs[job.id] != nil
+        let restartable = inputs[job.id] != nil || payload(for: job.id) != nil
+        if job.rejected && !restartable { return false }
+        return !(job.retryFromStart || job.baseURL != PrintService.configuredBaseURL) || restartable
     }
 
     func printedModel(for job: PrintJob) -> PrintedModel? {
@@ -150,15 +192,16 @@ final class PrintJobManager: ObservableObject {
     func retry(_ job: PrintJob) {
         guard canRetry(job) else { return }
         if job.retryFromStart || job.baseURL != PrintService.configuredBaseURL {
-            guard let input = inputs[job.id] else {
+            let input = inputs[job.id]
+            guard let payload = input.flatMap({ try? PrintService.payload(for: $0) }) ?? payload(for: job.id) else {
                 if let index = jobs.firstIndex(where: { $0.id == job.id }) {
                     jobs[index].error = "Original print input is no longer available; print again."
                     persist()
                 }
                 return
             }
+            start(payload: payload, input: input, name: job.name, kind: job.kind, sourceScanFileName: job.sourceScanFileName)
             dismiss(job)
-            start(input: input, name: job.name, kind: job.kind)
             return
         }
         guard let index = jobs.firstIndex(where: { $0.id == job.id }) else { return }
@@ -167,14 +210,15 @@ final class PrintJobManager: ObservableObject {
         jobs[index].rejected = false
         jobs[index].progress = PrintProgress(stage: "reconnecting", message: "Reconnecting to print server", progress: nil)
         persist()
-        run(jobs[index], submit: inputs[job.id] != nil && !jobs[index].accepted)
+        run(jobs[index], submit: payload(for: job.id) != nil && !jobs[index].accepted)
     }
 
     func dismiss(_ job: PrintJob) {
         tasks.removeValue(forKey: job.id)?.cancel()
         jobs.removeAll { $0.id == job.id }
         inputs.removeValue(forKey: job.id)
-        uploads.removeValue(forKey: job.id)
+        payloads.removeValue(forKey: job.id)
+        PrintUploadState.discard(job.id)
         uploadConfirmations.removeValue(forKey: job.id)
         confirmedJobs.remove(job.id)
         shownUploads.remove(job.id)
@@ -201,7 +245,7 @@ final class PrintJobManager: ObservableObject {
                 Task { @MainActor in
                     self.downloads.formUnion(ids)
                     for job in self.jobs where !job.isFinished && self.tasks[job.id] == nil && self.uploadConfirmations[job.id] == nil {
-                        self.run(job, submit: false)
+                        self.run(job, submit: !job.accepted && self.payload(for: job.id) != nil)
                     }
                 }
             }
@@ -241,17 +285,20 @@ final class PrintJobManager: ObservableObject {
                     }
                     let url: URL
                     let accepted = jobs.first(where: { $0.id == job.id })?.accepted ?? false
-                    uploaded = resend && !accepted && inputs[job.id] != nil
-                    if uploaded, let input = inputs[job.id] {
-                        if !confirmedJobs.contains(job.id), let state = uploads[job.id],
-                           let references = try await service.prepareUploads(for: input, jobID: job.id, state: state, onProgress: progress) {
+                    let payload = resend && !accepted ? payload(for: job.id) : nil
+                    uploaded = payload != nil
+                    if let payload {
+                        let state = PrintUploadState.forJob(job.id, in: Self.directory)
+                        if !confirmedJobs.contains(job.id),
+                           let references = try await service.prepareUploads(for: payload, jobID: job.id, state: state, onProgress: progress) {
                             guard !Task.isCancelled else { return }
                             tasks[job.id] = nil
                             uploadConfirmations[job.id] = references
                             persist()
                             return
                         }
-                        url = try await service.requestSTL(for: input, name: job.id, in: Self.directory, jobID: job.id, uploads: uploads[job.id], onProgress: progress) { _ in
+                        url = try await service.requestSTL(for: payload, name: job.id, in: Self.directory, jobID: job.id,
+                                                           uploads: state, onProgress: progress) { _ in
                             Task { @MainActor in
                                 guard let index = self.jobs.firstIndex(where: { $0.id == job.id }) else { return }
                                 self.jobs[index].accepted = true
@@ -277,7 +324,8 @@ final class PrintJobManager: ObservableObject {
                     if case PrintError.server(200, let detail) = error, !detail.contains("Lost contact") { break }
                     if case PrintError.server(404, _) = error { break }
                     if !active {
-                        startDownload(job)
+                        // Not yet accepted: the server holds no result to download, so the print is resent once the app is back.
+                        if jobs.first(where: { $0.id == job.id })?.accepted ?? true { startDownload(job) }
                         tasks[job.id] = nil
                         return
                     }
@@ -373,8 +421,9 @@ final class PrintJobManager: ObservableObject {
     }
 
     private func persist() {
-        let resumable = jobs.filter { uploadConfirmations[$0.id] == nil }
-        if let data = try? JSONEncoder().encode(resumable) { defaults.set(data, forKey: "printJobs") }
+        if let data = try? JSONEncoder().encode(jobs) { defaults.set(data, forKey: "printJobs") }
+        if let data = try? JSONEncoder().encode(uploadConfirmations) { defaults.set(data, forKey: "printUploadConfirmations") }
+        defaults.set(Array(confirmedJobs), forKey: "printConfirmedJobs")
     }
 }
 
@@ -484,6 +533,7 @@ final class PrintBackgroundUpload: NSObject, URLSessionDataDelegate, PrintUpload
         return try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { continuation in
                 let task = session.uploadTask(with: request, fromFile: file)
+                task.taskDescription = file.deletingLastPathComponent().lastPathComponent + "/" + file.lastPathComponent
                 lock.withLock { pending[task.taskIdentifier] = (continuation, onProgress, Data()) }
                 let cancelled = box.lock.withLock {
                     box.task = task
@@ -509,13 +559,22 @@ final class PrintBackgroundUpload: NSObject, URLSessionDataDelegate, PrintUpload
     }
 
     func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
-        guard let entry = lock.withLock({ pending.removeValue(forKey: task.taskIdentifier) }) else { return }
+        guard let entry = lock.withLock({ pending.removeValue(forKey: task.taskIdentifier) }) else {
+            // Started before iOS relaunched the app: record the file as uploaded so step 3 can follow.
+            let parts = task.taskDescription?.split(separator: "/").map(String.init) ?? []
+            if error == nil, parts.count == 2, let status = (task.response as? HTTPURLResponse)?.statusCode, (200..<300).contains(status) {
+                PrintUploadState.forJob(parts[0], in: PrintJobManager.directory).markUploaded(parts[1])
+            }
+            return
+        }
         if let error { entry.continuation.resume(throwing: error); return }
         entry.continuation.resume(returning: ((task.response as? HTTPURLResponse)?.statusCode ?? 0, entry.body))
     }
 
     func urlSessionDidFinishEvents(forBackgroundURLSession session: URLSession) {
         DispatchQueue.main.async {
+            // Claims background time before iOS is told the events are handled and may suspend the app.
+            MainActor.assumeIsolated { PrintJobManager.shared.resumeUnaccepted() }
             self.completionHandler?()
             self.completionHandler = nil
         }
