@@ -80,7 +80,73 @@ struct PhotoPrintView: View {
 
 struct PrintedModel: Identifiable {
     let url: URL
+    var sourceScan: ScanFile? = nil
     var id: URL { url }
+}
+
+struct PrintResultView: View {
+    @EnvironmentObject private var store: ScanStore
+    @Environment(\.dismiss) private var dismiss
+    @State private var isSharing = false
+    @State private var isSaved = false
+    @State private var saveError: String?
+    let model: PrintedModel
+
+    var body: some View {
+        NavigationStack {
+            List {
+                Section {
+                    Label(model.url.lastPathComponent, systemImage: "doc")
+                }
+                Section {
+                    if isSaved {
+                        Label("Saved to My Scans", systemImage: "checkmark.circle")
+                            .foregroundStyle(.secondary)
+                    } else {
+                        Button(action: save) {
+                            Label(model.sourceScan == nil ? "Save to My Scans" : "Save to Scan", systemImage: "square.and.arrow.down")
+                        }
+                    }
+                    Button {
+                        isSharing = true
+                    } label: {
+                        Label("Share STL", systemImage: "square.and.arrow.up")
+                    }
+                }
+            }
+            .navigationTitle("STL Ready")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") { dismiss() }
+                }
+            }
+        }
+        .presentationDetents([.medium, .large])
+        .sheet(isPresented: $isSharing) {
+            ActivityView(items: [model.url]) { isSharing = false }
+                .presentationDetents([.medium, .large])
+                .ignoresSafeArea()
+        }
+        .alert("Couldn't save STL", isPresented: Binding(get: { saveError != nil }, set: { if !$0 { saveError = nil } })) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(saveError ?? "")
+        }
+    }
+
+    private func save() {
+        do {
+            if let scan = model.sourceScan {
+                try store.savePrintedSTL(model.url, for: scan)
+            } else {
+                try store.savePhotoPrint(model.url)
+            }
+            isSaved = true
+        } catch {
+            saveError = error.localizedDescription
+        }
+    }
 }
 
 @MainActor

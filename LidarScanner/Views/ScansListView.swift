@@ -16,7 +16,7 @@ struct ScansListView: View {
                 ContentUnavailableView(
                     "No Scans Yet",
                     systemImage: "cube.transparent",
-                    description: Text("Room and object scans you save appear here as USDZ files.")
+                    description: Text("Room scans, object scans, and photo prints you save appear here.")
                 )
                 .accessibilityIdentifier("emptyScans")
             } else {
@@ -24,7 +24,7 @@ struct ScansListView: View {
                     ForEach(ScanKind.allCases) { kind in
                         let scans = store.scans(of: kind)
                         if !scans.isEmpty {
-                            Section("\(kind.rawValue) Scans") {
+                            Section(kind == .photo ? "Photo Prints" : "\(kind.rawValue) Scans") {
                                 ForEach(scans) { scan in
                                     row(for: scan)
                                 }
@@ -40,7 +40,9 @@ struct ScansListView: View {
         .disabled(pendingExport != nil)
         .navigationTitle("My Scans")
         .onAppear(perform: store.reload)
-        .quickLookPreview($previewURL)
+        .navigationDestination(item: $selectedScan) { scan in
+            ScanDetailView(scan: scan)
+        }
         .safeAreaInset(edge: .bottom) {
             if pendingExport != nil {
                 ProgressView("Preparing STL…")
@@ -67,7 +69,7 @@ struct ScansListView: View {
     private func row(for scan: ScanFile) -> some View {
         HStack {
             Button {
-                previewURL = scan.url
+                selectedScan = scan
             } label: {
                 Label {
                     VStack(alignment: .leading) {
@@ -86,32 +88,34 @@ struct ScansListView: View {
             .buttonStyle(.plain)
             .accessibilityIdentifier("scan-\(scan.name)")
 
-            Button {
-                startPrint(scan)
-            } label: {
-                Image(systemName: "printer")
-                    .foregroundStyle(Color.accentColor)
-            }
-            .buttonStyle(.borderless)
-            .accessibilityLabel("Print")
-            .accessibilityIdentifier("print-\(scan.name)")
-
-            Menu {
-                ShareLink(item: scan.url) {
-                    Label("Share USDZ", systemImage: "square.and.arrow.up")
-                }
+            if scan.kind != .photo {
                 Button {
-                    pendingExport = scan
+                    startPrint(scan)
                 } label: {
-                    Label("Export as STL", systemImage: "square.and.arrow.down")
+                    Image(systemName: "printer")
+                        .foregroundStyle(Color.accentColor)
                 }
-            } label: {
-                Image(systemName: "square.and.arrow.up")
-                    .foregroundStyle(Color.accentColor)
+                .buttonStyle(.borderless)
+                .accessibilityLabel("Print")
+                .accessibilityIdentifier("print-\(scan.name)")
+
+                Menu {
+                    ShareLink(item: scan.url) {
+                        Label("Share USDZ", systemImage: "square.and.arrow.up")
+                    }
+                    Button {
+                        pendingExport = scan
+                    } label: {
+                        Label("Export as STL", systemImage: "square.and.arrow.down")
+                    }
+                } label: {
+                    Image(systemName: "square.and.arrow.up")
+                        .foregroundStyle(Color.accentColor)
+                }
+                .buttonStyle(.borderless)
+                .accessibilityLabel("Share or export \(scan.name)")
+                .accessibilityIdentifier("share-\(scan.name)")
             }
-            .buttonStyle(.borderless)
-            .accessibilityLabel("Share or export \(scan.name)")
-            .accessibilityIdentifier("share-\(scan.name)")
         }
         .swipeActions {
             Button(role: .destructive) {
@@ -147,6 +151,37 @@ struct ScansListView: View {
         } catch {
             self.error = ("Couldn't delete scan", error.localizedDescription)
         }
+    }
+}
+
+private struct ScanDetailView: View {
+    let scan: ScanFile
+    @State private var previewURL: URL?
+
+    var body: some View {
+        List {
+            if scan.kind != .photo {
+                Section("Source Scan") {
+                    Button {
+                        previewURL = scan.url
+                    } label: {
+                        Label("Preview USDZ", systemImage: "cube")
+                    }
+                }
+            }
+            if let stl = scan.printedSTLURL {
+                Section("Saved STL") {
+                    Label(stl.lastPathComponent, systemImage: "doc")
+                        .accessibilityIdentifier("savedSTLFilename")
+                    ShareLink(item: stl) {
+                        Label("Share STL", systemImage: "square.and.arrow.up")
+                    }
+                }
+            }
+        }
+        .navigationTitle(scan.name)
+        .navigationBarTitleDisplayMode(.inline)
+        .quickLookPreview($previewURL)
     }
 }
 

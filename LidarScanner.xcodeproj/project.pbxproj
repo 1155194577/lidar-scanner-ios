@@ -7,8 +7,10 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		0DC82092F32565199032FEAF /* ObjectScanGuideView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E49C636CBB0CB09E509412FD /* ObjectScanGuideView.swift */; };
 		15A21CE618630EE491C5B685 /* ObjectScanView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 186B1783B50F7042BF77067E /* ObjectScanView.swift */; };
 		2C2970A3478BF16445404766 /* KeychainStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4ADE67AD7F6A66051B9B8B61 /* KeychainStore.swift */; };
+		2D785FF7AB729514C260F05A /* ObjectScanCoachingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 745B90CA011A00DEC61B996E /* ObjectScanCoachingTests.swift */; };
 		3395E5F040C5D595887BE822 /* LaunchArguments.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1327490574893FDE679AF73E /* LaunchArguments.swift */; };
 		38B584EEC9A7699DF06A1BA3 /* HomeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DF61EF62F44AF9D1CC4DAEB5 /* HomeView.swift */; };
 		4A92011FA9CC945A746DB9B9 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 54FB452B361CBD769754AC19 /* SettingsView.swift */; };
@@ -27,6 +29,7 @@
 		87F1D42B3348073E27952807 /* PrintJobBanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = D816C91F3745899FFA9D5632 /* PrintJobBanner.swift */; };
 		8D24E52EA9DBE0905CAD9F8B /* PrintJobManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 86C1D1E620A18A53EC63D7A0 /* PrintJobManager.swift */; };
 		96506DE04905D6C3933F26AA /* PhotoPrintView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4030F8493820551CA06FD224 /* PhotoPrintView.swift */; };
+		A04325EBDB113FADD45FEF26 /* ObjectScanCoaching.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5BA44A95E9C07A3E97B33581 /* ObjectScanCoaching.swift */; };
 		ED9CBD58831D55A87F79AA4F /* ExportSample.usdz in Resources */ = {isa = PBXBuildFile; fileRef = FFCD04E0C144E654C31E0E6A /* ExportSample.usdz */; };
 		F358299C9768C7B853CFBC26 /* PrintServiceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3E4B9C6E706A7F0A1044D1D6 /* PrintServiceTests.swift */; };
 		F5E1F4B69A346854F7F23658 /* RoomScanView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2BE16B613004BEB3D632B32 /* RoomScanView.swift */; };
@@ -61,7 +64,9 @@
 		4ADE67AD7F6A66051B9B8B61 /* KeychainStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeychainStore.swift; sourceTree = "<group>"; };
 		54FB452B361CBD769754AC19 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		5AEE1F5D3FC4825BDA978F4C /* ScanStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScanStore.swift; sourceTree = "<group>"; };
+		5BA44A95E9C07A3E97B33581 /* ObjectScanCoaching.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ObjectScanCoaching.swift; sourceTree = "<group>"; };
 		5C087DF6219678C4951C8740 /* PhotoPrintTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhotoPrintTests.swift; sourceTree = "<group>"; };
+		745B90CA011A00DEC61B996E /* ObjectScanCoachingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ObjectScanCoachingTests.swift; sourceTree = "<group>"; };
 		847C4A0C1369226AF4808EE4 /* SampleCube.usdz */ = {isa = PBXFileReference; lastKnownFileType = file.usdz; path = SampleCube.usdz; sourceTree = "<group>"; };
 		86C1D1E620A18A53EC63D7A0 /* PrintJobManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PrintJobManager.swift; sourceTree = "<group>"; };
 		87F0A168FB8895BC010B38B4 /* ScanStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScanStoreTests.swift; sourceTree = "<group>"; };
@@ -78,6 +83,7 @@
 		D816C91F3745899FFA9D5632 /* PrintJobBanner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PrintJobBanner.swift; sourceTree = "<group>"; };
 		DAF2A85F7D7E839B808E7602 /* STLExporterTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = STLExporterTests.swift; sourceTree = "<group>"; };
 		DF61EF62F44AF9D1CC4DAEB5 /* HomeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HomeView.swift; sourceTree = "<group>"; };
+		E49C636CBB0CB09E509412FD /* ObjectScanGuideView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ObjectScanGuideView.swift; sourceTree = "<group>"; };
 		E5AD673B8AEF97F12628CA16 /* LidarScannerTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = LidarScannerTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		FFCD04E0C144E654C31E0E6A /* ExportSample.usdz */ = {isa = PBXFileReference; lastKnownFileType = file.usdz; path = ExportSample.usdz; sourceTree = "<group>"; };
 /* End PBXFileReference section */
@@ -94,6 +100,7 @@
 		3AC6393B0E4041EA810A8E81 /* LidarScannerTests */ = {
 			isa = PBXGroup;
 			children = (
+				745B90CA011A00DEC61B996E /* ObjectScanCoachingTests.swift */,
 				5C087DF6219678C4951C8740 /* PhotoPrintTests.swift */,
 				3E4B9C6E706A7F0A1044D1D6 /* PrintServiceTests.swift */,
 				87F0A168FB8895BC010B38B4 /* ScanStoreTests.swift */,
@@ -107,6 +114,7 @@
 			children = (
 				C8407C2985E2FFF7986A9BC4 /* ActivityView.swift */,
 				DF61EF62F44AF9D1CC4DAEB5 /* HomeView.swift */,
+				E49C636CBB0CB09E509412FD /* ObjectScanGuideView.swift */,
 				186B1783B50F7042BF77067E /* ObjectScanView.swift */,
 				4030F8493820551CA06FD224 /* PhotoPrintView.swift */,
 				D816C91F3745899FFA9D5632 /* PrintJobBanner.swift */,
@@ -332,6 +340,8 @@
 				2C2970A3478BF16445404766 /* KeychainStore.swift in Sources */,
 				3395E5F040C5D595887BE822 /* LaunchArguments.swift in Sources */,
 				683D19C30B97ACFEF138D529 /* LidarScannerApp.swift in Sources */,
+				A04325EBDB113FADD45FEF26 /* ObjectScanCoaching.swift in Sources */,
+				0DC82092F32565199032FEAF /* ObjectScanGuideView.swift in Sources */,
 				15A21CE618630EE491C5B685 /* ObjectScanView.swift in Sources */,
 				96506DE04905D6C3933F26AA /* PhotoPrintView.swift in Sources */,
 				87F1D42B3348073E27952807 /* PrintJobBanner.swift in Sources */,
@@ -357,6 +367,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				2D785FF7AB729514C260F05A /* ObjectScanCoachingTests.swift in Sources */,
 				8667ED2BDD60E0D6F87B2D73 /* PhotoPrintTests.swift in Sources */,
 				F358299C9768C7B853CFBC26 /* PrintServiceTests.swift in Sources */,
 				7DE70F0DC44AE8C71A244F94 /* STLExporterTests.swift in Sources */,
