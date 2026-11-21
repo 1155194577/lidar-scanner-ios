@@ -11,13 +11,17 @@
 		3395E5F040C5D595887BE822 /* LaunchArguments.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1327490574893FDE679AF73E /* LaunchArguments.swift */; };
 		38B584EEC9A7699DF06A1BA3 /* HomeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DF61EF62F44AF9D1CC4DAEB5 /* HomeView.swift */; };
 		4A92011FA9CC945A746DB9B9 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 54FB452B361CBD769754AC19 /* SettingsView.swift */; };
+		4B17F2193AD9428FB11CF48B /* ExportSample.usdz in Resources */ = {isa = PBXBuildFile; fileRef = FFCD04E0C144E654C31E0E6A /* ExportSample.usdz */; };
 		4C5367025D965D1E2158BDC9 /* PrintService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0948124D94F88A05132C8D1C /* PrintService.swift */; };
 		5F97E84126558BAE031049BB /* ScansListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A3E8DCDB974B375AADE89EB2 /* ScansListView.swift */; };
 		683D19C30B97ACFEF138D529 /* LidarScannerApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 943C6B93CDBEF4C325CA7E88 /* LidarScannerApp.swift */; };
 		6A57E1C78638338120EDC3CD /* ScanStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 87F0A168FB8895BC010B38B4 /* ScanStoreTests.swift */; };
 		6F17BE26927A05A6DA0E0B4F /* LidarScannerUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CD0AB86940F3D7F42A85C0A6 /* LidarScannerUITests.swift */; };
 		7205225AFA1B5179CFF21200 /* DeviceSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8BFDFCA721B0D943DB447DC /* DeviceSupport.swift */; };
+		74F3DA10CEEDBA6012D63E72 /* STLExporter.swift in Sources */ = {isa = PBXBuildFile; fileRef = B758C4696E00787E91415462 /* STLExporter.swift */; };
+		7DE70F0DC44AE8C71A244F94 /* STLExporterTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DAF2A85F7D7E839B808E7602 /* STLExporterTests.swift */; };
 		8798B9B3B8ED9FD73CE5F592 /* ActivityView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C8407C2985E2FFF7986A9BC4 /* ActivityView.swift */; };
+		ED9CBD58831D55A87F79AA4F /* ExportSample.usdz in Resources */ = {isa = PBXBuildFile; fileRef = FFCD04E0C144E654C31E0E6A /* ExportSample.usdz */; };
 		F358299C9768C7B853CFBC26 /* PrintServiceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3E4B9C6E706A7F0A1044D1D6 /* PrintServiceTests.swift */; };
 		F5E1F4B69A346854F7F23658 /* RoomScanView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2BE16B613004BEB3D632B32 /* RoomScanView.swift */; };
 		F8AC652EAB45CEE69EF26635 /* ScanStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5AEE1F5D3FC4825BDA978F4C /* ScanStore.swift */; };
@@ -54,13 +58,16 @@
 		9EEA2B6DD210C068DEE835B6 /* LidarScanner.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = LidarScanner.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		A3E8DCDB974B375AADE89EB2 /* ScansListView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScansListView.swift; sourceTree = "<group>"; };
 		B2BE16B613004BEB3D632B32 /* RoomScanView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RoomScanView.swift; sourceTree = "<group>"; };
+		B758C4696E00787E91415462 /* STLExporter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = STLExporter.swift; sourceTree = "<group>"; };
 		B8BFDFCA721B0D943DB447DC /* DeviceSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceSupport.swift; sourceTree = "<group>"; };
 		C65E56EFF2ACDCAA2E4C04BA /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		C789F36D9041AF57FD69D61B /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		C8407C2985E2FFF7986A9BC4 /* ActivityView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ActivityView.swift; sourceTree = "<group>"; };
 		CD0AB86940F3D7F42A85C0A6 /* LidarScannerUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LidarScannerUITests.swift; sourceTree = "<group>"; };
+		DAF2A85F7D7E839B808E7602 /* STLExporterTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = STLExporterTests.swift; sourceTree = "<group>"; };
 		DF61EF62F44AF9D1CC4DAEB5 /* HomeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HomeView.swift; sourceTree = "<group>"; };
 		E5AD673B8AEF97F12628CA16 /* LidarScannerTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = LidarScannerTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		FFCD04E0C144E654C31E0E6A /* ExportSample.usdz */ = {isa = PBXFileReference; lastKnownFileType = file.usdz; path = ExportSample.usdz; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXGroup section */
@@ -77,6 +84,7 @@
 			children = (
 				3E4B9C6E706A7F0A1044D1D6 /* PrintServiceTests.swift */,
 				87F0A168FB8895BC010B38B4 /* ScanStoreTests.swift */,
+				DAF2A85F7D7E839B808E7602 /* STLExporterTests.swift */,
 			);
 			path = LidarScannerTests;
 			sourceTree = "<group>";
@@ -100,6 +108,7 @@
 				B8BFDFCA721B0D943DB447DC /* DeviceSupport.swift */,
 				0948124D94F88A05132C8D1C /* PrintService.swift */,
 				5AEE1F5D3FC4825BDA978F4C /* ScanStore.swift */,
+				B758C4696E00787E91415462 /* STLExporter.swift */,
 			);
 			path = Model;
 			sourceTree = "<group>";
@@ -114,6 +123,14 @@
 				53A3A7F677B2666A3E64090C /* Views */,
 			);
 			path = LidarScanner;
+			sourceTree = "<group>";
+		};
+		AEE506B73433396217EDB8B1 /* TestFixtures */ = {
+			isa = PBXGroup;
+			children = (
+				FFCD04E0C144E654C31E0E6A /* ExportSample.usdz */,
+			);
+			path = TestFixtures;
 			sourceTree = "<group>";
 		};
 		B2CA60FB6253D773EBD3682C /* Products */ = {
@@ -141,6 +158,7 @@
 				A83FCD43E4D8A8D70A81484D /* LidarScanner */,
 				3AC6393B0E4041EA810A8E81 /* LidarScannerTests */,
 				29BBE8ADBE3C51835D44897C /* LidarScannerUITests */,
+				AEE506B73433396217EDB8B1 /* TestFixtures */,
 				B2CA60FB6253D773EBD3682C /* Products */,
 			);
 			sourceTree = "<group>";
@@ -153,6 +171,7 @@
 			buildConfigurationList = 948C2AD117237429D4BEE7B2 /* Build configuration list for PBXNativeTarget "LidarScannerUITests" */;
 			buildPhases = (
 				4CF207EDB51D01DA4C24451F /* Sources */,
+				CE58DCC4B4CDA5677B64AC8E /* Resources */,
 			);
 			buildRules = (
 			);
@@ -189,6 +208,7 @@
 			buildConfigurationList = 6FF3CDB5AF06E1A1E6D2C916 /* Build configuration list for PBXNativeTarget "LidarScannerTests" */;
 			buildPhases = (
 				AA885DC9E25ACAD124CE22B2 /* Sources */,
+				7FA66E61ED4D123A231AAE35 /* Resources */,
 			);
 			buildRules = (
 			);
@@ -248,11 +268,27 @@
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
+		7FA66E61ED4D123A231AAE35 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				4B17F2193AD9428FB11CF48B /* ExportSample.usdz in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		C718239D20FED43F5C23A9E2 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
 				F9E7A58D2EA90D6622BC0111 /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		CE58DCC4B4CDA5677B64AC8E /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				ED9CBD58831D55A87F79AA4F /* ExportSample.usdz in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -271,6 +307,7 @@
 				15A21CE618630EE491C5B685 /* ObjectScanView.swift in Sources */,
 				4C5367025D965D1E2158BDC9 /* PrintService.swift in Sources */,
 				F5E1F4B69A346854F7F23658 /* RoomScanView.swift in Sources */,
+				74F3DA10CEEDBA6012D63E72 /* STLExporter.swift in Sources */,
 				F8AC652EAB45CEE69EF26635 /* ScanStore.swift in Sources */,
 				5F97E84126558BAE031049BB /* ScansListView.swift in Sources */,
 				4A92011FA9CC945A746DB9B9 /* SettingsView.swift in Sources */,
@@ -290,6 +327,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				F358299C9768C7B853CFBC26 /* PrintServiceTests.swift in Sources */,
+				7DE70F0DC44AE8C71A244F94 /* STLExporterTests.swift in Sources */,
 				6A57E1C78638338120EDC3CD /* ScanStoreTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

@@ -45,7 +45,7 @@ targets:
   LidarScannerTests:
     type: bundle.unit-test
     platform: iOS
-    sources: [LidarScannerTests]
+    sources: [LidarScannerTests, TestFixtures/ExportSample.usdz]
     dependencies:
       - target: LidarScanner
     settings:
@@ -55,7 +55,7 @@ targets:
   LidarScannerUITests:
     type: bundle.ui-testing
     platform: iOS
-    sources: [LidarScannerUITests]
+    sources: [LidarScannerUITests, TestFixtures/ExportSample.usdz]
     dependencies:
       - target: LidarScanner
     settings:

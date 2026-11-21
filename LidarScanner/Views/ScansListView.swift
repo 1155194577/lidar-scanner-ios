@@ -1,14 +1,16 @@
 import QuickLook
 import SwiftUI
+import UIKit
 
 struct ScansListView: View {
     @EnvironmentObject private var store: ScanStore
     @State private var previewURL: URL?
-    @State private var errorMessage: String?
+    @State private var error: (title: String, message: String)?
+    @State private var pendingExport: ScanFile?
+    @State private var stlFile: STLFile?
     @State private var printingScan: ScanFile?
     @State private var printTask: Task<Void, Never>?
     @State private var printedModel: PrintedModel?
-    @State private var printError: String?
 
     var body: some View {
         Group {
@@ -37,7 +39,7 @@ struct ScansListView: View {
                 }
             }
         }
-        .disabled(printingScan != nil)
+        .disabled(printingScan != nil || pendingExport != nil)
         .overlay {
             if let scan = printingScan {
                 PrintProgressView(scanName: scan.name) { cancelPrint() }
@@ -46,28 +48,39 @@ struct ScansListView: View {
         .navigationTitle("My Scans")
         .onAppear(perform: store.reload)
         .quickLookPreview($previewURL)
+        .safeAreaInset(edge: .bottom) {
+            if pendingExport != nil {
+                ProgressView("Preparing STL…")
+                    .padding()
+                    .frame(maxWidth: .infinity)
+                    .background(.regularMaterial)
+            }
+        }
+        .task(id: pendingExport) {
+            if let scan = pendingExport {
+                await exportSTL(for: scan)
+            }
+        }
+        .sheet(item: $stlFile) { file in
+            STLDocumentPicker(file: file) { stlFile = nil }
+        }
         .sheet(item: $printedModel) { model in
             ActivityView(items: [model.url]) { printedModel = nil }
                 .presentationDetents([.medium, .large])
                 .ignoresSafeArea()
         }
-        .alert("Couldn't print scan", isPresented: Binding(get: { printError != nil }, set: { if !$0 { printError = nil } })) {
+        .alert(error?.title ?? "", isPresented: Binding(get: { error != nil }, set: { if !$0 { error = nil } })) {
             Button("OK", role: .cancel) {}
         } message: {
-            Text(printError ?? "")
-        }
-        .alert("Couldn't delete scan", isPresented: Binding(get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } })) {
-            Button("OK", role: .cancel) {}
-        } message: {
-            Text(errorMessage ?? "")
+            Text(error?.message ?? "")
         }
     }
 
     private func row(for scan: ScanFile) -> some View {
-        Button {
-            previewURL = scan.url
-        } label: {
-            HStack {
+        HStack {
+            Button {
+                previewURL = scan.url
+            } label: {
                 Label {
                     VStack(alignment: .leading) {
                         Text(scan.name).foregroundStyle(.primary)
@@ -79,31 +92,57 @@ struct ScansListView: View {
                     Image(systemName: scan.kind.systemImage)
                         .foregroundStyle(Color.accentColor)
                 }
-                Spacer()
-                Button {
-                    startPrint(scan)
-                } label: {
-                    Image(systemName: "printer")
-                        .foregroundStyle(Color.accentColor)
-                }
-                .buttonStyle(.borderless)
-                .accessibilityLabel("Print")
-                .accessibilityIdentifier("print-\(scan.name)")
-                ShareLink(item: scan.url) {
-                    Image(systemName: "square.and.arrow.up")
-                        .foregroundStyle(Color.accentColor)
-                }
-                .buttonStyle(.borderless)
-                .accessibilityIdentifier("share-\(scan.name)")
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
             }
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("scan-\(scan.name)")
+
+            Button {
+                startPrint(scan)
+            } label: {
+                Image(systemName: "printer")
+                    .foregroundStyle(Color.accentColor)
+            }
+            .buttonStyle(.borderless)
+            .accessibilityLabel("Print")
+            .accessibilityIdentifier("print-\(scan.name)")
+
+            Menu {
+                ShareLink(item: scan.url) {
+                    Label("Share USDZ", systemImage: "square.and.arrow.up")
+                }
+                Button {
+                    pendingExport = scan
+                } label: {
+                    Label("Export as STL", systemImage: "square.and.arrow.down")
+                }
+            } label: {
+                Image(systemName: "square.and.arrow.up")
+                    .foregroundStyle(Color.accentColor)
+            }
+            .buttonStyle(.borderless)
+            .accessibilityLabel("Share or export \(scan.name)")
+            .accessibilityIdentifier("share-\(scan.name)")
         }
-        .buttonStyle(.plain)
-        .accessibilityIdentifier("scan-\(scan.name)")
         .swipeActions {
             Button(role: .destructive) {
                 delete([scan])
             } label: {
                 Label("Delete", systemImage: "trash")
+            }
+        }
+    }
+
+    private func exportSTL(for scan: ScanFile) async {
+        defer { pendingExport = nil }
+        do {
+            let file = try await STLExporter.export(scan.url)
+            try Task.checkCancellation()
+            stlFile = file
+        } catch {
+            if !Task.isCancelled {
+                self.error = ("Couldn't export STL", error.localizedDescription)
             }
         }
     }
@@ -119,7 +158,7 @@ struct ScansListView: View {
             } catch is CancellationError {
             } catch let error as URLError where error.code == .cancelled {
             } catch {
-                printError = error.localizedDescription
+                self.error = ("Couldn't print scan", error.localizedDescription)
             }
             printingScan = nil
             printTask = nil
@@ -136,7 +175,38 @@ struct ScansListView: View {
                 try store.delete(scan)
             }
         } catch {
-            errorMessage = error.localizedDescription
+            self.error = ("Couldn't delete scan", error.localizedDescription)
+        }
+    }
+}
+
+private struct STLDocumentPicker: UIViewControllerRepresentable {
+    let file: STLFile
+    let onDismiss: () -> Void
+
+    func makeUIViewController(context: Context) -> UIDocumentPickerViewController {
+        let picker = UIDocumentPickerViewController(forExporting: [file.url], asCopy: true)
+        picker.delegate = context.coordinator
+        return picker
+    }
+
+    func updateUIViewController(_ picker: UIDocumentPickerViewController, context: Context) {}
+
+    func makeCoordinator() -> Coordinator { Coordinator(onDismiss: onDismiss) }
+
+    final class Coordinator: NSObject, UIDocumentPickerDelegate {
+        let onDismiss: () -> Void
+
+        init(onDismiss: @escaping () -> Void) {
+            self.onDismiss = onDismiss
+        }
+
+        func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
+            onDismiss()
+        }
+
+        func documentPickerWasCancelled(_ controller: UIDocumentPickerViewController) {
+            onDismiss()
         }
     }
 }
