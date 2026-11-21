@@ -27,6 +27,54 @@ final class FaceCaptureTests: XCTestCase {
         XCTAssertFalse(body.contains("name=\"mesh\""))
     }
 
+    func testTurnHeadViewsArePrefixedAndCounted() throws {
+        var capture = FaceScanModel.sampleCapture(heightMM: 100)
+        capture.photo = Data("jpeg".utf8)
+        capture.extraViews = [FaceScanModel.sampleView(yaw: 30), FaceScanModel.sampleView(yaw: -60)]
+        capture.extraViews[1].depth = nil
+        let body = String(decoding: try XCTUnwrap(PrintService(baseURL: "http://localhost:8765").makeRequest(for: .face(capture), boundary: "B").httpBody), as: UTF8.self)
+
+        XCTAssertTrue(body.contains("name=\"view_count\"\r\n\r\n3\r\n"))
+        XCTAssertTrue(body.contains("name=\"view_1_photo\"; filename=\"view_1_face.jpg\"\r\nContent-Type: image/jpeg"))
+        XCTAssertTrue(body.contains("name=\"view_1_yaw_deg\"\r\n\r\n30.0\r\n"))
+        XCTAssertTrue(body.contains("name=\"view_1_depth\"; filename=\"view_1_depth.f32\""))
+        XCTAssertTrue(body.contains("name=\"view_1_depth_width\"\r\n\r\n64\r\n"))
+        XCTAssertTrue(body.contains("name=\"view_1_face_transform\""))
+        XCTAssertTrue(body.contains("name=\"view_2_camera_transform\""))
+        XCTAssertTrue(body.contains("name=\"view_2_yaw_deg\"\r\n\r\n-60.0\r\n"))
+        XCTAssertFalse(body.contains("name=\"view_2_depth\""))
+        XCTAssertFalse(body.contains("name=\"view_3_"))
+        XCTAssertEqual(body.components(separatedBy: "name=\"face_vertices\"").count, 2)
+
+        let files = try PrintService(baseURL: "http://localhost:8765").payload(for: .face(capture)).files.map(\.name)
+        XCTAssertEqual(files, ["photo", "depth", "face_vertices", "view_1_photo", "view_1_depth", "view_2_photo"])
+    }
+
+    func testFrontOnlyCaptureSendsNoViewFields() throws {
+        let body = String(decoding: try XCTUnwrap(PrintService(baseURL: "http://localhost:8765").makeRequest(for: .face(FaceScanModel.sampleCapture(heightMM: 100))).httpBody), as: UTF8.self)
+        XCTAssertFalse(body.contains("name=\"view_"))
+    }
+
+    func testYawIsPositiveWhenTheHeadTurnsToItsOwnLeft() {
+        let camera = matrix_identity_float4x4
+        func face(_ degrees: Float) -> simd_float4x4 {
+            var m = simd_float4x4(simd_quatf(angle: degrees * .pi / 180, axis: SIMD3(0, 1, 0)))
+            m.columns.3 = SIMD4(0, 0, -0.4, 1)
+            return m
+        }
+        XCTAssertEqual(FaceCapture.yawDegrees(faceTransform: face(0), cameraTransform: camera), 0, accuracy: 1e-3)
+        XCTAssertEqual(FaceCapture.yawDegrees(faceTransform: face(30), cameraTransform: camera), 30, accuracy: 1e-3)
+        XCTAssertEqual(FaceCapture.yawDegrees(faceTransform: face(-60), cameraTransform: camera), -60, accuracy: 1e-3)
+        // Tilting the head forward is not yaw.
+        var nod = simd_float4x4(simd_quatf(angle: 0.3, axis: SIMD3(1, 0, 0)))
+        nod.columns.3 = SIMD4(0, 0, -0.4, 1)
+        XCTAssertEqual(FaceCapture.yawDegrees(faceTransform: nod, cameraTransform: camera), 0, accuracy: 1e-3)
+        // The phone moving to the head's right (-x) shows the head turned to its own left.
+        var moved = matrix_identity_float4x4
+        moved.columns.3 = SIMD4(-0.4, 0, 0, 1)
+        XCTAssertEqual(FaceCapture.yawDegrees(faceTransform: face(0), cameraTransform: moved), 45, accuracy: 1e-3)
+    }
+
     func testDepthUploadIsLittleEndianFloat32() throws {
         let depth = FaceCapture.Depth(values: [0.5, .nan], width: 2, height: 1)
         let data = depth.data

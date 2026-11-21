@@ -53,7 +53,20 @@ struct FaceCapture: Equatable {
         }
     }
 
+    /// A head-turn view after the front one, from the same AR session, so its poses share the front view's world frame.
+    struct View: Equatable {
+        var photo: Data
+        var intrinsics: Intrinsics
+        var cameraTransform: [Float]
+        var imageOrientation: CGImagePropertyOrientation
+        var depth: Depth?
+        var faceTransform: [Float]
+        /// Head yaw relative to the camera, degrees; + is the user turned to their own left.
+        var yawDegrees: Double
+    }
+
     static let defaultHeightMM = 100.0
+    static let maxViewCount = 5
 
     var photo: Data
     /// Photo pixels.
@@ -68,12 +81,12 @@ struct FaceCapture: Equatable {
     /// ARFaceAnchor.geometry.vertices as xyz triples in face-anchor space (metres).
     var faceVertices: [Float]?
     var heightMM: Double = FaceCapture.defaultHeightMM
+    /// Head-turn views; the front view is `view 0`, these are uploaded as `view_<i>_*` with i from 1.
+    var extraViews: [View] = []
 
     /// The multipart fields of the face contract, in upload order. `photo`, `depth` and `face_vertices` are files.
     func addFields<Form: PrintFormBuilder>(to form: inout Form) throws {
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = .sortedKeys
-        func json<T: Encodable>(_ value: T) throws -> String { String(decoding: try encoder.encode(value), as: UTF8.self) }
+        func json<T: Encodable>(_ value: T) throws -> String { try Self.json(value) }
 
         form.addField(name: "mode", value: "face")
         form.addFile(name: "photo", fileName: "face.jpg", contentType: "image/jpeg", data: photo)
@@ -84,15 +97,7 @@ struct FaceCapture: Equatable {
             form.addField(name: "face_transform", value: try json(faceTransform))
         }
         if let depth {
-            form.addFile(name: "depth", fileName: "depth.f32", contentType: "application/octet-stream", data: depth.data)
-            form.addField(name: "depth_width", value: String(depth.width))
-            form.addField(name: "depth_height", value: String(depth.height))
-            if let intrinsics = depth.intrinsics {
-                form.addField(name: "depth_intrinsics", value: try json(intrinsics))
-            }
-            if let extrinsics = depth.extrinsics {
-                form.addField(name: "depth_extrinsics", value: try json(extrinsics))
-            }
+            try Self.addDepth(depth, prefix: "", to: &form)
         }
         if let faceVertices, faceVertices.count >= 3 {
             let data = faceVertices.withUnsafeBufferPointer { Data(buffer: $0) }
@@ -100,6 +105,53 @@ struct FaceCapture: Equatable {
             form.addField(name: "face_vertex_count", value: String(faceVertices.count / 3))
         }
         form.addField(name: "height_mm", value: String(format: "%.1f", locale: Locale(identifier: "en_US_POSIX"), heightMM))
+        let views = extraViews.prefix(Self.maxViewCount - 1)
+        guard !views.isEmpty else { return }
+        form.addField(name: "view_count", value: String(views.count + 1))
+        for (offset, view) in views.enumerated() {
+            let prefix = "view_\(offset + 1)_"
+            form.addFile(name: prefix + "photo", fileName: prefix + "face.jpg", contentType: "image/jpeg", data: view.photo)
+            form.addField(name: prefix + "image_orientation", value: String(view.imageOrientation.rawValue))
+            form.addField(name: prefix + "intrinsics", value: try json(view.intrinsics))
+            form.addField(name: prefix + "camera_transform", value: try json(view.cameraTransform))
+            form.addField(name: prefix + "face_transform", value: try json(view.faceTransform))
+            form.addField(name: prefix + "yaw_deg", value: String(format: "%.1f", locale: Locale(identifier: "en_US_POSIX"), view.yawDegrees))
+            if let depth = view.depth {
+                try Self.addDepth(depth, prefix: prefix, to: &form)
+            }
+        }
+    }
+
+    private static func json<T: Encodable>(_ value: T) throws -> String {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = .sortedKeys
+        return String(decoding: try encoder.encode(value), as: UTF8.self)
+    }
+
+    private static func addDepth<Form: PrintFormBuilder>(_ depth: Depth, prefix: String, to form: inout Form) throws {
+        form.addFile(name: prefix + "depth", fileName: prefix + "depth.f32", contentType: "application/octet-stream", data: depth.data)
+        form.addField(name: prefix + "depth_width", value: String(depth.width))
+        form.addField(name: prefix + "depth_height", value: String(depth.height))
+        if let intrinsics = depth.intrinsics {
+            form.addField(name: prefix + "depth_intrinsics", value: try json(intrinsics))
+        }
+        if let extrinsics = depth.extrinsics {
+            form.addField(name: prefix + "depth_extrinsics", value: try json(extrinsics))
+        }
+    }
+
+    /// Head yaw relative to the camera in degrees, + when the user has turned to their own left (the face anchor's +x).
+    /// The face's forward axis and the direction to the camera are compared about the head's up axis.
+    static func yawDegrees(faceTransform: simd_float4x4, cameraTransform: simd_float4x4) -> Double {
+        let up = simd_normalize(SIMD3(faceTransform.columns.1.x, faceTransform.columns.1.y, faceTransform.columns.1.z))
+        let forward = SIMD3(faceTransform.columns.2.x, faceTransform.columns.2.y, faceTransform.columns.2.z)
+        let toCamera = SIMD3(cameraTransform.columns.3.x, cameraTransform.columns.3.y, cameraTransform.columns.3.z)
+            - SIMD3(faceTransform.columns.3.x, faceTransform.columns.3.y, faceTransform.columns.3.z)
+        func flatten(_ v: SIMD3<Float>) -> SIMD3<Float> { v - simd_dot(v, up) * up }
+        let f = flatten(forward), c = flatten(toCamera)
+        guard simd_length(f) > 1e-6, simd_length(c) > 1e-6 else { return 0 }
+        let angle = atan2(simd_dot(simd_cross(c, f), up), simd_dot(c, f))
+        return Double(angle) * 180 / .pi
     }
 
     static func columns(_ matrix: simd_float4x4) -> [Float] {

@@ -3,6 +3,7 @@ import SwiftUI
 struct SettingsView: View {
     @Environment(\.dismiss) private var dismiss
     @AppStorage(PrintService.baseURLKey) private var printBaseURL = PrintService.defaultBaseURL
+    @AppStorage(FaceScanModel.turnHeadKey) private var faceTurnHead = false
     @State private var printToken = KeychainStore.read(PrintService.tokenKey) ?? ""
 
     var body: some View {
@@ -27,6 +28,14 @@ struct SettingsView: View {
                     Text("Print Server")
                 } footer: {
                     Text("Print uploads the scan to \(endpointPreview). You can save the returned STL in My Scans or share it with a slicer app. The token is sent as a Bearer token and kept in the Keychain.")
+                }
+                Section {
+                    Toggle("Turn-your-head capture", isOn: $faceTurnHead)
+                        .accessibilityIdentifier("faceTurnHeadToggle")
+                } header: {
+                    Text("Face Scan")
+                } footer: {
+                    Text("Face Scan also captures your head turned left and right, so the print server only has to guess the back of the head. Needs a print server with multi-view face support.")
                 }
             }
             .navigationTitle("Settings")
