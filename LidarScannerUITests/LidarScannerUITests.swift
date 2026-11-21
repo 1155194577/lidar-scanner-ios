@@ -438,6 +438,28 @@ final class LidarScannerUITests: XCTestCase {
         XCTAssertGreaterThan(stats["rejected_puts"] ?? 0, 0)
     }
 
+    func testPhotoPrintFinishesAfterTheAppIsRelaunchedMidUpload() throws {
+        try requirePrintStub()
+        let arguments = ["-UITestFakePhotoCapture", "-UITestFakePitch", "5", "-printBaseURL", Self.stubHost + "/slow", "-printAPIToken", Self.stubToken]
+        let app = launch(arguments)
+        app.buttons["photoPrintButton"].tap()
+        XCTAssertTrue(app.buttons["takePhotoAndPrintButton"].waitForExistence(timeout: 5))
+        app.buttons["takePhotoAndPrintButton"].tap()
+        let uploading = app.staticTexts.containing(NSPredicate(format: "label CONTAINS 'Uploading'")).firstMatch
+        XCTAssertTrue(uploading.waitForExistence(timeout: 10), "the print never started uploading")
+        app.terminate()
+
+        app.launchArguments = arguments
+        app.launch()
+        XCTAssertTrue(app.images["uploadedPhotoPreview"].waitForExistence(timeout: 60), "the relaunched print did not finish uploading")
+        XCTAssertFalse(app.staticTexts.containing(NSPredicate(format: "label CONTAINS 'Lost contact'")).firstMatch.exists)
+        app.buttons["confirmS3Print"].tap()
+        XCTAssertTrue(app.descendants(matching: .any)["stlViewer"].firstMatch.waitForExistence(timeout: 25), "the relaunched print did not finish")
+        attachScreenshot(app, name: "relaunched-print-finished")
+        let received = try lastStubRequest()
+        XCTAssertEqual(received["uploaded"] as? [String], ["photo", "depth", "depth_confidence"])
+    }
+
     private func printPhoto(baseURL: String) throws {
         let app = launch(["-UITestFakePhotoCapture", "-UITestFakePitch", "5", "-printBaseURL", baseURL, "-printAPIToken", Self.stubToken])
         app.buttons["photoPrintButton"].tap()
