@@ -136,7 +136,7 @@ final class PrintJobManager: ObservableObject {
         jobs[index].rejected = false
         jobs[index].progress = PrintProgress(stage: "reconnecting", message: "Reconnecting to print server", progress: nil)
         persist()
-        run(jobs[index], submit: inputs[job.id] != nil)
+        run(jobs[index], submit: inputs[job.id] != nil && !jobs[index].accepted)
     }
 
     func dismiss(_ job: PrintJob) {
@@ -193,14 +193,16 @@ final class PrintJobManager: ObservableObject {
                 if Task.isCancelled { return }
             }
             var lastError: Error = PrintError.server(status: 404, message: "Lost contact with the print server")
-            for attempt in 0..<3 {
+            var resend = submit
+            for _ in 0..<3 {
                 do {
                     let service = try service(job)
                     let progress: @Sendable (PrintProgress) -> Void = { progress in
                         Task { @MainActor in self.update(job.id, progress: progress) }
                     }
                     let url: URL
-                    if attempt == 0, submit, let input = inputs[job.id] {
+                    let accepted = jobs.first(where: { $0.id == job.id })?.accepted ?? false
+                    if resend, !accepted, let input = inputs[job.id] {
                         url = try await service.requestSTL(for: input, name: job.id, in: Self.directory, jobID: job.id, onProgress: progress) { _ in
                             Task { @MainActor in
                                 guard let index = self.jobs.firstIndex(where: { $0.id == job.id }) else { return }
@@ -218,6 +220,8 @@ final class PrintJobManager: ObservableObject {
                 } catch {
                     if Task.isCancelled { return }
                     lastError = error
+                    // An upload the server never answered left no job to re-attach to.
+                    resend = error is URLError && !(jobs.first(where: { $0.id == job.id })?.accepted ?? true)
                     if case PrintError.serverChanged = error { break }
                     if case PrintError.invalidBaseURL = error { break }
                     if case PrintError.jobFailed = error { break }

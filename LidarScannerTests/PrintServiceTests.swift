@@ -485,6 +485,26 @@ final class PrintServiceTests: XCTestCase {
     }
 
     @MainActor
+    func testUploadFailingBeforeAcceptanceIsResentNotReattached() async throws {
+        let suite = "PrintJobs-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite); StubProtocol.connectFailures = 0 }
+        var methods: [String] = []
+        StubProtocol.connectFailures = 1
+        StubProtocol.handler = { request in
+            methods.append(request.httpMethod ?? "")
+            if request.httpMethod == "POST" { return (200, "model/stl", Data("stl".utf8)) }
+            return (404, "application/json", Data(#"{"detail":"unknown job"}"#.utf8))
+        }
+        let manager = PrintJobManager(defaults: defaults, notifications: false, makeService: { _, _ in try self.service() })
+        manager.start(input: .photo(Data([1]), heightMM: 10), name: "Cold start", kind: "photo")
+        let ready = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in manager.jobs.first?.result != nil }, object: nil)
+        await fulfillment(of: [ready], timeout: 4)
+        XCTAssertEqual(methods, ["POST"])
+        manager.dismiss(manager.jobs[0])
+    }
+
+    @MainActor
     func testChangedServerRetryUsesNewSettingsWhenInputRemains() async throws {
         let previous = UserDefaults.standard.object(forKey: PrintService.baseURLKey)
         defer { UserDefaults.standard.set(previous, forKey: PrintService.baseURLKey) }
@@ -734,11 +754,17 @@ private final class StubProtocol: URLProtocol {
     nonisolated(unsafe) static var handler: ((URLRequest) -> (Int, String, Data))?
     nonisolated(unsafe) static var finishLoading = true
     nonisolated(unsafe) static var chunkDelay: TimeInterval = 0
+    nonisolated(unsafe) static var connectFailures = 0
 
     override class func canInit(with request: URLRequest) -> Bool { true }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
 
     override func startLoading() {
+        if Self.connectFailures > 0 {
+            Self.connectFailures -= 1
+            client?.urlProtocol(self, didFailWithError: URLError(.timedOut))
+            return
+        }
         guard let handler = Self.handler else {
             client?.urlProtocol(self, didFailWithError: URLError(.cannotConnectToHost))
             return
