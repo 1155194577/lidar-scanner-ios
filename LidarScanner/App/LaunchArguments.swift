@@ -7,6 +7,8 @@ enum LaunchArguments {
     static let forceUnsupported = "-UITestForceUnsupported"
     static let fakePhotoCapture = "-UITestFakePhotoCapture"
     static let fakeFaceCapture = "-UITestFakeFaceCapture"
+    /// Object Scan skips capture and reconstruction and "builds" the base64 USDZ in `UITestObjectModelFixture`; a rescan builds `UITestObjectRescanFixture`.
+    static let fakeObjectCapture = "-UITestFakeObjectCapture"
     /// Pass as `-UITestFakePitch <degrees>`; launch arguments in this form land in UserDefaults.
     static let fakePitchKey = "UITestFakePitch"
 

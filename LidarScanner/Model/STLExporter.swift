@@ -28,7 +28,7 @@ enum STLExporter {
         }
     }
 
-    private struct MeshPart: Sendable {
+    struct MeshPart: Sendable {
         let positions: [SIMD3<Float>]
         let indices: [UInt32]
         let transform: simd_float4x4
@@ -54,7 +54,7 @@ enum STLExporter {
     }
 
     @MainActor
-    private static func loadModel(at source: URL) async throws -> Entity {
+    static func loadModel(at source: URL) async throws -> Entity {
         do {
             if #available(iOS 18.0, *) {
                 return try await Entity(contentsOf: source)
@@ -69,7 +69,7 @@ enum STLExporter {
     }
 
     @MainActor
-    private static func collectParts(from entity: Entity, into parts: inout [MeshPart]) {
+    static func collectParts(from entity: Entity, into parts: inout [MeshPart]) {
         guard entity.isEnabled else { return }
         if let mesh = entity.components[ModelComponent.self]?.mesh {
             let contents = mesh.contents

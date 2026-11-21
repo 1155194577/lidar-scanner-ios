@@ -69,6 +69,46 @@ final class LidarScannerUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["Object Scan Unavailable"].waitForExistence(timeout: 5))
     }
 
+    func testObjectScanShowsMissingPartAndRescanFillsIt() throws {
+        let bundle = Bundle(for: Self.self)
+        let open = try Data(contentsOf: XCTUnwrap(bundle.url(forResource: "OpenBox", withExtension: "usdz")))
+        let closed = try Data(contentsOf: XCTUnwrap(bundle.url(forResource: "ClosedBox", withExtension: "usdz")))
+        let app = XCUIApplication()
+        app.launchArguments = ["-UITestResetScans", "-UITestFakeObjectCapture"]
+        app.launchEnvironment["UITestObjectModelFixture"] = open.base64EncodedString()
+        app.launchEnvironment["UITestObjectRescanFixture"] = closed.base64EncodedString()
+        app.launch()
+
+        app.buttons["objectScanButton"].tap()
+        app.buttons["guideSkipButton"].tap()
+        let title = app.staticTexts["gapTitle"]
+        XCTAssertTrue(title.waitForExistence(timeout: 15))
+        XCTAssertEqual(title.label, "1 part wasn't captured")
+        XCTAssertTrue(app.staticTexts["gapSummary"].label.contains("on the side, about 13 cm across"))
+        XCTAssertTrue(app.otherElements["gapModelView"].exists || app.descendants(matching: .any)["gapModelView"].exists)
+        sleep(2)
+        let shot = XCUIScreen.main.screenshot()
+        let attachment = XCTAttachment(screenshot: shot)
+        attachment.name = "object-gap"
+        attachment.lifetime = .keepAlways
+        add(attachment)
+        if let directory = ProcessInfo.processInfo.environment["GAP_SCREENSHOT_DIR"] {
+            try shot.pngRepresentation.write(to: URL(fileURLWithPath: directory).appendingPathComponent("object-gap.png"))
+        }
+
+        app.buttons["rescanGapButton"].tap()
+        let result = app.staticTexts["gapCheckResult"]
+        XCTAssertTrue(result.waitForExistence(timeout: 15))
+        XCTAssertEqual(result.label, "No gaps found. Every side was captured.")
+        if let directory = ProcessInfo.processInfo.environment["GAP_SCREENSHOT_DIR"] {
+            try XCUIScreen.main.screenshot().pngRepresentation
+                .write(to: URL(fileURLWithPath: directory).appendingPathComponent("object-no-gap.png"))
+        }
+        app.buttons["Close"].tap()
+        XCTAssertTrue(app.buttons["objectScanButton"].waitForExistence(timeout: 5))
+        XCTAssertEqual(app.staticTexts["scanCount"].label, "1")
+    }
+
     func testObjectScanGuideCloseReturnsHome() {
         let app = launch()
         app.buttons["objectScanButton"].tap()
