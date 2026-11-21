@@ -141,11 +141,6 @@ struct ScansListView: View {
     }
 }
 
-private struct PrintedModel: Identifiable {
-    let url: URL
-    var id: URL { url }
-}
-
 private struct PrintProgressView: View {
     let scanName: String
     let onCancel: () -> Void

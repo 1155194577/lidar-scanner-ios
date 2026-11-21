@@ -5,6 +5,7 @@ enum LaunchArguments {
     static let resetScans = "-UITestResetScans"
     static let seedSampleScans = "-UITestSeedSampleScans"
     static let forceUnsupported = "-UITestForceUnsupported"
+    static let fakePhotoCapture = "-UITestFakePhotoCapture"
 
     static func contains(_ argument: String) -> Bool {
         ProcessInfo.processInfo.arguments.contains(argument)
