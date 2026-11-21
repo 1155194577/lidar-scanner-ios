@@ -7,6 +7,8 @@ enum LaunchArguments {
     static let forceUnsupported = "-UITestForceUnsupported"
     static let fakePhotoCapture = "-UITestFakePhotoCapture"
     static let fakeFaceCapture = "-UITestFakeFaceCapture"
+    /// With turn-your-head capture on, the fake head stays facing front after the first view, so only Print Now finishes.
+    static let fakeFaceNoTurn = "-UITestFakeFaceNoTurn"
     /// Object Scan skips capture and reconstruction and "builds" the base64 USDZ in `UITestObjectModelFixture`; a rescan builds `UITestObjectRescanFixture`.
     static let fakeObjectCapture = "-UITestFakeObjectCapture"
     /// Pass as `-UITestFakePitch <degrees>`; launch arguments in this form land in UserDefaults.

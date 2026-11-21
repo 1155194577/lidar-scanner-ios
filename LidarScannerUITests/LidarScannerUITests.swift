@@ -566,6 +566,57 @@ final class LidarScannerUITests: XCTestCase {
         XCTAssertNotNil(last["depth_intrinsics"] as? [String: Any])
     }
 
+    /// Turn-your-head capture: the fake head looks front, then turns to ±30° and ±60°, and all five views go up.
+    func testTurnHeadFaceScanUploadsEveryView() throws {
+        try requirePrintStub()
+        let app = launch(["-UITestFakeFaceCapture", "-faceTurnHeadCapture", "YES", "-printBaseURL", Self.stubURL, "-printAPIToken", Self.stubToken])
+        app.buttons["faceScanButton"].tap()
+        XCTAssertTrue(app.buttons["Start Face Scan"].waitForExistence(timeout: 5))
+        tapCaptureFace(in: app)
+
+        assertShareSheet(in: app, captionPrefix: "Face ", errorAlert: "Couldn't print face", timeout: 15)
+        attachScreenshot(app, name: "face-turn-head-stl")
+
+        let last = try lastStubRequest()
+        XCTAssertEqual(last["mode"] as? String, "face")
+        XCTAssertEqual(last["view_count"] as? Int, 5)
+        let views = try XCTUnwrap(last["views"] as? [[String: Any]])
+        XCTAssertEqual(views.compactMap { $0["yaw_deg"] as? Double }, [30, 60, -30, -60])
+        XCTAssertEqual(views.compactMap { $0["depth_width"] as? Int }, [64, 64, 64, 64])
+        XCTAssertTrue(views.allSatisfy { ($0["face_transform"] as? [Double])?.count == 16 })
+    }
+
+    /// Print Now finishes a turn-your-head scan early with only the views captured so far.
+    func testTurnHeadFaceScanCanPrintEarly() throws {
+        try requirePrintStub()
+        let app = launch(["-UITestFakeFaceCapture", "-UITestFakeFaceNoTurn", "-faceTurnHeadCapture", "YES", "-printBaseURL", Self.stubURL, "-printAPIToken", Self.stubToken])
+        app.buttons["faceScanButton"].tap()
+        tapCaptureFace(in: app)
+
+        let progress = app.staticTexts["faceViewProgress"]
+        XCTAssertTrue(progress.waitForExistence(timeout: 5))
+        XCTAssertEqual(progress.label, "1 of 5 views")
+        XCTAssertTrue(app.staticTexts["Slowly turn your head to the left."].exists)
+        attachScreenshot(app, name: "face-turn-head-guide")
+        let printNow = app.buttons["printNowButton"]
+        XCTAssertTrue(printNow.isEnabled)
+        printNow.tap()
+
+        assertShareSheet(in: app, captionPrefix: "Face ", errorAlert: "Couldn't print face", timeout: 15)
+        let last = try lastStubRequest()
+        XCTAssertEqual(last["mode"] as? String, "face")
+        XCTAssertNil(last["view_count"])
+        XCTAssertFalse((last["fields"] as? [String] ?? []).contains { $0.hasPrefix("view_") })
+    }
+
+    func testTurnHeadCaptureIsOffByDefaultInSettings() {
+        let app = launch(["-faceTurnHeadCapture", "NO"])
+        app.buttons["settingsButton"].tap()
+        let toggle = app.switches["faceTurnHeadToggle"]
+        XCTAssertTrue(toggle.waitForExistence(timeout: 5))
+        XCTAssertEqual(toggle.value as? String, "0")
+    }
+
     func testFacePrintCanBeSavedToMyScans() throws {
         try requirePrintStub()
         let app = launch(["-UITestResetScans", "-UITestFakeFaceCapture", "-printBaseURL", Self.stubURL, "-printAPIToken", Self.stubToken])

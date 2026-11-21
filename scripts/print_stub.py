@@ -6,7 +6,10 @@ Mirrors the live contract: POST /print takes multipart form data with either
 optional `height_mm`, or `mode=face` with a front-camera `photo`, `intrinsics`,
 `camera_transform`, `image_orientation`, optional `depth` (float32 metres) with
 `depth_width`/`depth_height`/`depth_intrinsics`/`depth_extrinsics`, `face_transform`,
-`face_vertices` (float32 xyz) with `face_vertex_count` and `height_mm`. Photo + depth
+`face_vertices` (float32 xyz) with `face_vertex_count` and `height_mm`; turn-your-head scans add
+`view_count` and, per extra view i >= 1, `view_<i>_photo`, `view_<i>_image_orientation`,
+`view_<i>_intrinsics`, `view_<i>_camera_transform`, `view_<i>_face_transform`, `view_<i>_yaw_deg`
+and optional `view_<i>_depth` with `view_<i>_depth_width`/`_height`/`_intrinsics`/`_extrinsics`. Photo + depth
 fusion adds `depth` (float32 metres), `depth_width`, `depth_height`, `intrinsics`,
 `image_orientation` and optional `depth_confidence`, `object_points`; any photo may
 carry `camera_transform` with `image_orientation`.
@@ -18,7 +21,7 @@ requests must carry `Authorization: Bearer <token>` or get a 401. GET /last retu
 of the last accepted print request, for UI tests.
 
 Signed uploads: POST /print/uploads takes JSON {"job_id", "files": {name: {"content_type", "size"}}}
-(names: mesh, photo, depth, depth_confidence, face_vertices) and returns {"job_id", "expires_in": 900,
+(names: mesh, photo, depth, depth_confidence, face_vertices, view_<i>_photo, view_<i>_depth) and returns {"job_id", "expires_in": 900,
 "uploads": {name: {"url", "method": "PUT", "headers", "file_id", "get_url"}}}; a repeated request returns fresh URLs for the same
 job. PUT /s3/<job>/<name> needs exactly those headers, no Authorization, a live signature and the declared
 size, else 403 (expired or bad signature, S3-style XML) or 400. GET /print/uploads/<job> returns
@@ -45,6 +48,7 @@ import email.parser
 import email.policy
 import json
 import math
+import re
 import time
 import threading
 import uuid
@@ -56,6 +60,21 @@ MAX_UPLOAD_BYTES = 200 * 1024 * 1024
 UPLOAD_NAMES = ("mesh", "photo", "depth", "depth_confidence", "face_vertices")
 UPLOAD_FILENAMES = {"photo": "photo.jpg", "depth": "depth.f32", "depth_confidence": "confidence.u8",
                     "face_vertices": "face_vertices.f32"}
+VIEW_UPLOAD = re.compile(r"^view_([1-9][0-9]*)_(photo|depth)$")
+MAX_FACE_VIEWS = 5
+
+
+def is_upload_name(name):
+    return name in UPLOAD_NAMES or bool(VIEW_UPLOAD.match(name))
+
+
+def upload_filename(name):
+    view = VIEW_UPLOAD.match(name)
+    if view:
+        return "view_%s_%s" % (view.group(1), "face.jpg" if view.group(2) == "photo" else "depth.f32")
+    return UPLOAD_FILENAMES[name]
+
+
 MESH_TYPES = {"model/vnd.usdz+zip": ".usdz", "model/obj": ".obj", "application/x-ply": ".ply"}
 MODES = ("fail", "expire", "drop", "legacy", "deny", "slow")
 UPLOAD_EXPIRES = 900
@@ -191,13 +210,44 @@ def check_face(parts):
             if count <= 0 or len(parts["face_vertices"][1]) != count * 12:
                 raise ValueError("face_vertices must be face_vertex_count x 3 float32 values")
             summary["face_vertex_count"] = count
+        if "view_count" in parts:
+            view_count = int(text("view_count"))
+            if not 1 <= view_count <= MAX_FACE_VIEWS:
+                raise ValueError("view_count must be 1 to %d" % MAX_FACE_VIEWS)
+            summary["view_count"] = view_count
+            summary["views"] = [check_face_view(parts, i, text, matrix, intrinsics) for i in range(1, view_count)]
     except (TypeError, ValueError) as error:
-        raise ValueError(str(error) if str(error).startswith(("depth", "face", "camera", "intrinsics")) else "face fields must be numbers or JSON")
+        raise ValueError(str(error) if str(error).startswith(("depth", "face", "camera", "intrinsics", "view")) else "face fields must be numbers or JSON")
     if summary["image_orientation"] not in (1, 3, 6, 8):
         raise ValueError("image_orientation must be 1, 3, 6 or 8")
     if summary["height_mm"] <= 0:
         raise ValueError("height_mm must be a positive number")
     return summary
+
+
+def check_face_view(parts, index, text, matrix, intrinsics):
+    """Validates one turn-your-head view's `view_<index>_*` fields and returns a summary of it."""
+    prefix = "view_%d_" % index
+    if not parts.get(prefix + "photo", (None, b""))[1]:
+        raise ValueError("view %d needs %sphoto" % (index, prefix))
+    for name in ("intrinsics", "camera_transform", "face_transform"):
+        if prefix + name not in parts:
+            raise ValueError("view %d needs %s%s" % (index, prefix, name))
+    view = {
+        "image_orientation": int(text(prefix + "image_orientation") or 1),
+        "intrinsics": intrinsics(prefix + "intrinsics"),
+        "camera_transform": matrix(prefix + "camera_transform"),
+        "face_transform": matrix(prefix + "face_transform"),
+        "yaw_deg": float(text(prefix + "yaw_deg")) if prefix + "yaw_deg" in parts else None,
+    }
+    if view["image_orientation"] not in (1, 3, 6, 8):
+        raise ValueError("view %d image_orientation must be 1, 3, 6 or 8" % index)
+    if prefix + "depth" in parts:
+        width, height = int(text(prefix + "depth_width")), int(text(prefix + "depth_height"))
+        if width <= 0 or height <= 0 or len(parts[prefix + "depth"][1]) != width * height * 4:
+            raise ValueError("view %d depth must be depth_width x depth_height float32 values" % index)
+        view.update(depth_width=width, depth_height=height, depth_intrinsics=intrinsics(prefix + "depth_intrinsics"))
+    return view
 
 
 def check_pose(parts):
@@ -409,7 +459,7 @@ class Handler(BaseHTTPRequestHandler):
             uploads.denied = "deny" in modes
             uploads.slow = "slow" in modes
             for name, spec in files.items():
-                if name not in UPLOAD_NAMES:
+                if not is_upload_name(name):
                     return self.error(422, "unknown upload " + name)
                 content_type, size = spec.get("content_type"), spec.get("size")
                 if not content_type or not isinstance(size, int) or not 0 < size <= MAX_UPLOAD_BYTES:
@@ -440,7 +490,7 @@ class Handler(BaseHTTPRequestHandler):
                 return missing, None
             for name in names:
                 content_type, data = uploads.files[name]
-                filename = "mesh" + MESH_TYPES.get(content_type, ".bin") if name == "mesh" else UPLOAD_FILENAMES[name]
+                filename = "mesh" + MESH_TYPES.get(content_type, ".bin") if name == "mesh" else upload_filename(name)
                 parts[name] = (filename, data)
             return [], {"uploaded": names, "upload_stats": dict(uploads.stats)}
 
@@ -466,7 +516,7 @@ class Handler(BaseHTTPRequestHandler):
         parts = parse_multipart(content_type, body)
         upload_summary = {}
         if path == "/print" and "uploaded" in parts:
-            if any(name in parts for name in UPLOAD_NAMES):
+            if any(is_upload_name(name) for name in parts):
                 return self.error(400, "send uploaded files by URL, not as file parts")
             missing, upload_summary = self.attach_uploads(parts, modes)
             if missing:
