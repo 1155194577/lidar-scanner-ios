@@ -3,9 +3,12 @@
 
 Mirrors the live contract: POST /print takes multipart form data with either
 `mesh` (an .obj, .ply or .usdz file in metres) or `photo` (.jpg/.png) plus an
-optional `height_mm`, and answers with a small STL cube as `model/stl` and an
+optional `height_mm` and, for photo + depth fusion, `depth` (float32 metres),
+`depth_width`, `depth_height`, `intrinsics`, `image_orientation` and optional
+`depth_confidence`, `camera_transform`, `object_points`. It answers with a small STL cube as `model/stl` and an
 `X-Print-Report` JSON header. Errors are JSON `{"detail": ...}`. With --token,
-requests must carry `Authorization: Bearer <token>` or get a 401.
+requests must carry `Authorization: Bearer <token>` or get a 401. GET /last returns a JSON summary
+of the last accepted print request, for UI tests.
 
     python3 scripts/print_stub.py            # listens on 0.0.0.0:8765
     python3 scripts/print_stub.py --port 9000 --delay 2 --token secret
@@ -56,14 +59,51 @@ def parse_multipart(content_type, body):
     return parts
 
 
+def check_depth(parts):
+    """Validates the photo + depth fields and returns a summary of them."""
+    def field(name, required=True):
+        if name not in parts:
+            if required:
+                raise ValueError("%s is required with depth" % name)
+            return None
+        return parts[name][1].decode()
+
+    try:
+        width, height = int(field("depth_width")), int(field("depth_height"))
+        orientation = int(field("image_orientation"))
+        intrinsics = json.loads(field("intrinsics"))
+        transform = json.loads(field("camera_transform", False) or "null")
+        points = json.loads(field("object_points", False) or "[]")
+    except (TypeError, ValueError):
+        raise ValueError("depth fields must be numbers or JSON")
+    if width <= 0 or height <= 0 or len(parts["depth"][1]) != width * height * 4:
+        raise ValueError("depth must be depth_width x depth_height float32 values")
+    if "depth_confidence" in parts and len(parts["depth_confidence"][1]) != width * height:
+        raise ValueError("depth_confidence must be depth_width x depth_height bytes")
+    if orientation not in (1, 3, 6, 8):
+        raise ValueError("image_orientation must be 1, 3, 6 or 8")
+    if not isinstance(intrinsics, dict) or not all(k in intrinsics for k in ("fx", "fy", "cx", "cy", "width", "height")):
+        raise ValueError("intrinsics must have fx, fy, cx, cy, width and height")
+    if transform is not None and (not isinstance(transform, list) or len(transform) != 16):
+        raise ValueError("camera_transform must be 16 numbers")
+    return {
+        "depth_width": width, "depth_height": height, "image_orientation": orientation,
+        "intrinsics": intrinsics, "object_points": points,
+        "has_confidence": "depth_confidence" in parts, "has_camera_transform": transform is not None,
+    }
+
+
 class Handler(BaseHTTPRequestHandler):
     delay = 0.0
     token = None
     timeout = 60
+    last_request = {}
 
     def do_GET(self):
         if self.path.rstrip("/") == "/health":
             self.reply(200, "text/plain", b"ok\n")
+        elif self.path.rstrip("/") == "/last":
+            self.reply(200, "application/json", json.dumps(Handler.last_request).encode())
         else:
             self.reply(404, "text/plain", b"not found\n")
 
@@ -111,7 +151,17 @@ class Handler(BaseHTTPRequestHandler):
                 if height <= 0:
                     return self.error(422, "height_mm must be a positive number")
                 source += ", height %g mm" % height
+            if "depth" in parts:
+                try:
+                    summary = check_depth(parts)
+                except ValueError as error:
+                    return self.error(422, str(error))
+                source += ", depth %(depth_width)dx%(depth_height)d" % summary
             stem = "photo"
+
+        Handler.last_request = {"fields": sorted(parts), "source": source}
+        if "depth" in parts:
+            Handler.last_request.update(summary)
 
         self.log_message("print request: %s", source)
         time.sleep(self.delay)

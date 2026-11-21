@@ -30,7 +30,7 @@ Apps signed with a free Personal Team expire after 7 days; reconnect the phone a
 ## Using it
 
 - **Room Scan:** tap *Room Scan*, walk slowly around the room pointing the phone at walls, floor and furniture, tap **Done**, then **Save Scan**.
-- **Photo Print:** point the phone at an object, tap where it sits on the surface, then tap its top. The app measures the height with LiDAR; tap **Take Photo & Print** to send one photo plus that height to the print server, which builds the model from the photo and scales it to the measured height.
+- **Photo Print:** point the phone at an object, tap where it sits on the surface, then tap its top. The app measures the height with LiDAR; tap **Take Photo & Print** to send one photo, that frame's LiDAR depth map and camera intrinsics, and the height to the print server. The server builds the full shape from the photo and fits it to the LiDAR depth of the visible side for true size and pose.
 - **Object Scan:** put the object on a plain surface with room to walk around it. Tap **Continue**, fit the box around the object, tap **Start Capture** and circle it slowly. When the pass completes, do **Another Pass** (e.g. with the object flipped) or **Finish**. The model is then built on the phone, which takes a few minutes.
 
 ## Printing a scan
@@ -42,6 +42,12 @@ Set the server and token in **Settings** (gear icon on the home screen). The def
 ```
 POST {server}/print   multipart/form-data, Authorization: Bearer <token>
   mesh=<scan .usdz, metres>          (or photo=<jpeg> + height_mm=<number>)
+  photo mode also sends, from the same frame (photo left in sensor orientation):
+    depth=<float32 LE metres, row-major, NaN = no reading>  depth_width, depth_height
+    depth_confidence=<uint8 0/1/2>   image_orientation=<EXIF 1|3|6|8>
+    intrinsics={"fx","fy","cx","cy","width","height"} (photo pixels)
+    camera_transform=[16 floats, column-major camera-to-world, +Y up]
+    object_points=[[u,v] base, [u,v] top] (photo pixels)
 → 200 model/stl  (X-Print-Report header); errors are JSON {"detail"}
 ```
 

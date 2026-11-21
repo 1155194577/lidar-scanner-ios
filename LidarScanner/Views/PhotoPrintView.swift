@@ -108,6 +108,7 @@ final class PhotoPrintModel: ObservableObject {
     let isFake: Bool
     weak var arView: ARView?
     private var markers: [AnchorEntity] = []
+    private var tapPoints: [CGPoint] = []
     private var printTask: Task<Void, Never>?
 
     init(fake: Bool) {
@@ -141,6 +142,7 @@ final class PhotoPrintModel: ObservableObject {
         } else {
             top = position
         }
+        tapPoints.append(point)
         let anchor = AnchorEntity(world: position)
         anchor.addChild(ModelEntity(mesh: .generateSphere(radius: 0.008), materials: [SimpleMaterial(color: .systemTeal, isMetallic: false)]))
         arView.scene.addAnchor(anchor)
@@ -150,20 +152,21 @@ final class PhotoPrintModel: ObservableObject {
     func reset() {
         markers.forEach { $0.removeFromParent() }
         markers = []
+        tapPoints = []
         base = nil
         top = nil
     }
 
     func print() {
         guard let height = heightMM else { return }
-        guard let photo = capturePhoto() else {
+        guard let (photo, depth) = capture() else {
             errorMessage = "Couldn't take the photo. Try again."
             return
         }
         isPrinting = true
         printTask = Task {
             do {
-                let url = try await PrintService().requestSTL(for: .photo(photo, heightMM: height), name: Self.fileName())
+                let url = try await PrintService().requestSTL(for: .photo(photo, heightMM: height, depth: depth), name: Self.fileName())
                 try Task.checkCancellation()
                 printedModel = PrintedModel(url: url)
             } catch is CancellationError {
@@ -180,12 +183,34 @@ final class PhotoPrintModel: ObservableObject {
         printTask?.cancel()
     }
 
-    private func capturePhoto() -> Data? {
-        if isFake { return Self.sampleImage.jpegData(compressionQuality: 0.9) }
-        guard let arView, let buffer = arView.session.currentFrame?.capturedImage else { return nil }
-        let image = CIImage(cvPixelBuffer: buffer).oriented(Self.photoOrientation(for: arView.window?.windowScene?.interfaceOrientation ?? .portrait))
-        return CIContext().jpegRepresentation(of: image, colorSpace: CGColorSpace(name: CGColorSpace.sRGB)!, options: [:])
+    /// The current frame as a JPEG plus its LiDAR depth. With depth the photo stays in sensor orientation
+    /// (the server rotates it by `image_orientation`); without it the photo is rotated upright.
+    private func capture() -> (Data, DepthCapture?)? {
+        if isFake {
+            guard let photo = Self.sampleImage.jpegData(compressionQuality: 0.9) else { return nil }
+            return (photo, Self.sampleDepth)
+        }
+        guard let arView, let frame = arView.session.currentFrame else { return nil }
+        let interface = arView.window?.windowScene?.interfaceOrientation ?? .portrait
+        let orientation = Self.photoOrientation(for: interface)
+        let depth = frame.depthCapture(orientation: orientation, interface: interface, viewportSize: arView.bounds.size, taps: tapPoints)
+        var image = CIImage(cvPixelBuffer: frame.capturedImage)
+        if depth == nil { image = image.oriented(orientation) }
+        guard let photo = CIContext().jpegRepresentation(of: image, colorSpace: CGColorSpace(name: CGColorSpace.sRGB)!, options: [:]) else { return nil }
+        return (photo, depth)
     }
+
+    /// Stand-in depth for simulator UI tests: a flat surface 0.5 m away, matching the upright sample photo.
+    static let sampleDepth = DepthCapture(
+        depth: Array(repeating: 0.5, count: 48 * 64),
+        confidence: Array(repeating: 2, count: 48 * 64),
+        width: 48,
+        height: 64,
+        intrinsics: CameraIntrinsics(fx: 700, fy: 700, cx: 300, cy: 400, width: 600, height: 800),
+        cameraTransform: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1],
+        objectPoints: [CGPoint(x: 300, y: 560), CGPoint(x: 300, y: 300)],
+        imageOrientation: .up
+    )
 
     /// The camera buffer is in the sensor's landscape-right orientation; rotate it to match what the user sees.
     nonisolated static func photoOrientation(for interface: UIInterfaceOrientation) -> CGImagePropertyOrientation {
@@ -210,6 +235,45 @@ final class PhotoPrintModel: ObservableObject {
         context.fill(CGRect(x: 0, y: 0, width: 600, height: 800))
         UIColor.systemTeal.setFill()
         context.cgContext.fillEllipse(in: CGRect(x: 200, y: 300, width: 200, height: 260))
+    }
+}
+
+private extension ARFrame {
+    func depthCapture(orientation: CGImagePropertyOrientation, interface: UIInterfaceOrientation, viewportSize: CGSize, taps: [CGPoint]) -> DepthCapture? {
+        guard let sceneDepth = smoothedSceneDepth ?? sceneDepth, let depth = Self.values(Float32.self, of: sceneDepth.depthMap) else { return nil }
+        let k = camera.intrinsics
+        let width = camera.imageResolution.width, height = camera.imageResolution.height
+        // View points -> normalized image coordinates -> photo pixels.
+        let toImage = displayTransform(for: interface, viewportSize: viewportSize).inverted()
+        let points = taps.map { tap -> CGPoint in
+            let normalized = CGPoint(x: tap.x / viewportSize.width, y: tap.y / viewportSize.height).applying(toImage)
+            return CGPoint(x: normalized.x * width, y: normalized.y * height)
+        }
+        let t = camera.transform
+        return DepthCapture(
+            depth: depth,
+            confidence: sceneDepth.confidenceMap.flatMap { Self.values(UInt8.self, of: $0) },
+            width: CVPixelBufferGetWidth(sceneDepth.depthMap),
+            height: CVPixelBufferGetHeight(sceneDepth.depthMap),
+            intrinsics: CameraIntrinsics(fx: Double(k[0][0]), fy: Double(k[1][1]), cx: Double(k[2][0]), cy: Double(k[2][1]), width: Int(width), height: Int(height)),
+            cameraTransform: [t.columns.0, t.columns.1, t.columns.2, t.columns.3].flatMap { [$0.x, $0.y, $0.z, $0.w] },
+            objectPoints: points,
+            imageOrientation: orientation
+        )
+    }
+
+    static func values<T>(_ type: T.Type, of buffer: CVPixelBuffer) -> [T]? {
+        CVPixelBufferLockBaseAddress(buffer, .readOnly)
+        defer { CVPixelBufferUnlockBaseAddress(buffer, .readOnly) }
+        guard let base = CVPixelBufferGetBaseAddress(buffer) else { return nil }
+        let width = CVPixelBufferGetWidth(buffer), height = CVPixelBufferGetHeight(buffer), rowBytes = CVPixelBufferGetBytesPerRow(buffer)
+        var out: [T] = []
+        out.reserveCapacity(width * height)
+        for row in 0..<height {
+            let pointer = (base + row * rowBytes).assumingMemoryBound(to: T.self)
+            out.append(contentsOf: UnsafeBufferPointer(start: pointer, count: width))
+        }
+        return out
     }
 }
 

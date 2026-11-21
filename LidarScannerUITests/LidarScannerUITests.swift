@@ -175,6 +175,12 @@ final class LidarScannerUITests: XCTestCase {
         XCTAssertTrue(caption.waitForExistence(timeout: 5))
         XCTAssertTrue(caption.label.hasPrefix("Photo "), "Unexpected shared file \(caption.label)")
         XCTAssertFalse(app.alerts["Couldn't print photo"].exists)
+
+        let received = try lastStubRequest()
+        XCTAssertEqual(received["fields"] as? [String], ["camera_transform", "depth", "depth_confidence", "depth_height", "depth_width", "height_mm", "image_orientation", "intrinsics", "object_points", "photo"])
+        XCTAssertEqual(received["depth_width"] as? Int, 48)
+        XCTAssertEqual(received["depth_height"] as? Int, 64)
+        XCTAssertEqual((received["object_points"] as? [[Double]])?.count, 2)
     }
 
     func testPrintWithWrongTokenAsksToCheckSettings() throws {
@@ -240,6 +246,17 @@ final class LidarScannerUITests: XCTestCase {
 
     private static let stubURL = "http://127.0.0.1:8765"
     private static let stubToken = "stub-token"
+
+    private func lastStubRequest() throws -> [String: Any] {
+        let done = expectation(description: "stub last request")
+        var body: Data?
+        URLSession.shared.dataTask(with: URL(string: "\(Self.stubURL)/last")!) { data, _, _ in
+            body = data
+            done.fulfill()
+        }.resume()
+        wait(for: [done], timeout: 5)
+        return try XCTUnwrap(JSONSerialization.jsonObject(with: XCTUnwrap(body)) as? [String: Any])
+    }
 
     private func requirePrintStub() throws {
         let done = expectation(description: "stub health check")

@@ -3,7 +3,7 @@ import Foundation
 /// What gets sent to the print endpoint: a scan's mesh, or a single photo plus the LiDAR-measured object height.
 enum PrintInput {
     case mesh(URL)
-    case photo(Data, heightMM: Double)
+    case photo(Data, heightMM: Double, depth: DepthCapture? = nil)
 }
 
 enum PrintError: LocalizedError, Equatable {
@@ -66,9 +66,12 @@ struct PrintService {
         switch input {
         case .mesh(let url):
             form.addFile(name: "mesh", fileName: url.lastPathComponent, contentType: Self.contentType(for: url), data: try Data(contentsOf: url))
-        case .photo(let data, let heightMM):
+        case .photo(let data, let heightMM, let depth):
             form.addFile(name: "photo", fileName: "photo.jpg", contentType: "image/jpeg", data: data)
             form.addField(name: "height_mm", value: String(format: "%.1f", locale: Locale(identifier: "en_US_POSIX"), heightMM))
+            if let depth {
+                try Self.addDepth(depth, to: &form)
+            }
         }
 
         var request = URLRequest(url: endpoint, timeoutInterval: 600)
@@ -103,6 +106,25 @@ struct PrintService {
         let url = directory.appendingPathComponent(name).appendingPathExtension("stl")
         try data.write(to: url, options: .atomic)
         return url
+    }
+
+    /// Photo + depth fusion fields: `depth` (float32 LE metres), `depth_confidence` (uint8), `depth_width`, `depth_height`,
+    /// `intrinsics` (photo pixels), `camera_transform` (16 floats, column-major), `object_points` ([[u, v]] photo pixels)
+    /// and `image_orientation` (EXIF), with the photo itself left in sensor orientation.
+    private static func addDepth(_ depth: DepthCapture, to form: inout MultipartForm) throws {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = .sortedKeys
+        form.addFile(name: "depth", fileName: "depth.f32", contentType: "application/octet-stream", data: depth.depthData)
+        if let confidence = depth.confidence {
+            form.addFile(name: "depth_confidence", fileName: "confidence.u8", contentType: "application/octet-stream", data: Data(confidence))
+        }
+        form.addField(name: "depth_width", value: String(depth.width))
+        form.addField(name: "depth_height", value: String(depth.height))
+        form.addField(name: "image_orientation", value: String(depth.imageOrientation.rawValue))
+        form.addField(name: "intrinsics", value: String(decoding: try encoder.encode(depth.intrinsics), as: UTF8.self))
+        form.addField(name: "camera_transform", value: String(decoding: try encoder.encode(depth.cameraTransform), as: UTF8.self))
+        let points = depth.objectPoints.map { [($0.x * 10).rounded() / 10, ($0.y * 10).rounded() / 10] }
+        form.addField(name: "object_points", value: String(decoding: try encoder.encode(points), as: UTF8.self))
     }
 
     /// The `detail` of a JSON error body (a string, or a list of `{"msg"}` validation errors), else the body as text.
