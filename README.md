@@ -9,6 +9,8 @@ An iPhone app that makes 3D scans with the LiDAR sensor and the camera. It has t
 
 Scans are saved as USDZ files under **My Scans**, where you can view them in 3D / AR (Quick Look), share them, or delete them. They also appear in the Files app under *On My iPhone > LiDAR Scanner > Scans*.
 
+To save an STL, open the share menu next to a room or object scan, choose **Export as STL**, and pick a location in Files. The conversion runs on the phone and keeps the original USDZ. The STL uses millimeter coordinates and contains geometry only, without textures or printability repairs; a captured mesh may need cleanup before printing.
+
 **Requirements:** an iPhone or iPad Pro with LiDAR (iPhone 12 Pro or newer) on iOS 17 or later. Object Scan also needs an A14 chip or newer. The app opens on other devices and the simulator, but scanning shows an "unavailable" screen there.
 
 ## Install on your iPhone with a free Apple ID

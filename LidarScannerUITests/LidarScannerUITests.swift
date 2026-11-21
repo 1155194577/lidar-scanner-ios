@@ -6,9 +6,12 @@ final class LidarScannerUITests: XCTestCase {
         continueAfterFailure = false
     }
 
-    private func launch(_ arguments: [String] = []) -> XCUIApplication {
+    private func launch(_ arguments: [String] = [], usdFixture: Data? = nil) -> XCUIApplication {
         let app = XCUIApplication()
         app.launchArguments = ["-UITestResetScans"] + arguments
+        if let usdFixture {
+            app.launchEnvironment["UITestUSDZFixture"] = usdFixture.base64EncodedString()
+        }
         app.launch()
         return app
     }
@@ -61,5 +64,40 @@ final class LidarScannerUITests: XCTestCase {
 
         app.navigationBars.buttons.element(boundBy: 0).tap()
         XCTAssertEqual(app.staticTexts["scanCount"].label, "1")
+    }
+
+    func testRoomAndObjectScansOfferSTLExport() throws {
+        let fixture = try XCTUnwrap(Bundle(for: Self.self).url(forResource: "ExportSample", withExtension: "usdz"))
+        let app = launch(["-UITestSeedSampleScans"], usdFixture: try Data(contentsOf: fixture))
+        app.buttons["myScansLink"].tap()
+
+        for kind in ["Room", "Object"] {
+            let menu = shareMenu(for: kind, in: app)
+            XCTAssertTrue(menu.waitForExistence(timeout: 5))
+            menu.tap()
+            XCTAssertTrue(app.buttons["Share USDZ"].exists)
+            app.buttons["Export as STL"].tap()
+            XCTAssertTrue(app.buttons["Save"].waitForExistence(timeout: 15))
+            app.buttons["Cancel"].tap()
+            XCTAssertTrue(menu.waitForExistence(timeout: 5))
+        }
+    }
+
+    func testInvalidScanShowsExportErrorAndKeepsOriginal() {
+        let app = launch(["-UITestSeedSampleScans"])
+        app.buttons["myScansLink"].tap()
+        let menu = shareMenu(for: "Room", in: app)
+        XCTAssertTrue(menu.waitForExistence(timeout: 5))
+        menu.tap()
+        app.buttons["Export as STL"].tap()
+
+        let alert = app.alerts["Couldn't export STL"]
+        XCTAssertTrue(alert.waitForExistence(timeout: 10))
+        alert.buttons["OK"].tap()
+        XCTAssertTrue(menu.exists)
+    }
+
+    private func shareMenu(for kind: String, in app: XCUIApplication) -> XCUIElement {
+        app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "share-\(kind) ")).firstMatch
     }
 }
