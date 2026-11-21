@@ -78,11 +78,12 @@ final class ScanStore: ObservableObject {
     }
 
     /// Creates placeholder scans so the library can be exercised on the simulator, which has no LiDAR.
-    func seedSamples(contents: Data = Data("sample".utf8)) {
+    func seedSamples(contents: Data? = nil) {
         let now = Date()
+        let sample = contents != nil ? nil : Bundle.main.url(forResource: "SampleCube", withExtension: "usdz").flatMap { try? Data(contentsOf: $0) }
         for (offset, kind) in [ScanKind.room, .object].enumerated() {
             let url = newScanURL(kind: kind, date: now.addingTimeInterval(TimeInterval(-60 * offset)))
-            fileManager.createFile(atPath: url.path, contents: contents)
+            fileManager.createFile(atPath: url.path, contents: contents ?? sample ?? Data("sample".utf8))
         }
         reload()
     }

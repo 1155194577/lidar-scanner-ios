@@ -84,6 +84,31 @@ final class PrintServiceTests: XCTestCase {
         }
     }
 
+    func testSendsBearerTokenWhenSet() throws {
+        let mesh = directory.appendingPathComponent("Room 1.usdz")
+        try Data("usdz".utf8).write(to: mesh)
+        XCTAssertEqual(try PrintService(baseURL: "https://print.test", token: "abc").makeRequest(for: .mesh(mesh)).value(forHTTPHeaderField: "Authorization"), "Bearer abc")
+        XCTAssertNil(try PrintService(baseURL: "https://print.test", token: nil).makeRequest(for: .mesh(mesh)).value(forHTTPHeaderField: "Authorization"))
+    }
+
+    func testServerErrorReadsJSONDetail() async throws {
+        let mesh = directory.appendingPathComponent("Room 1.usdz")
+        try Data("usdz".utf8).write(to: mesh)
+        StubProtocol.handler = { _ in (415, "application/json", Data(#"{"detail": "HEIC photos are not supported"}"#.utf8)) }
+
+        do {
+            _ = try await service().requestSTL(for: .mesh(mesh), name: "Room 1", in: directory)
+            XCTFail("Expected an error")
+        } catch {
+            XCTAssertEqual(error as? PrintError, .server(status: 415, message: "HEIC photos are not supported"))
+        }
+        XCTAssertEqual(PrintService.errorMessage(from: Data(#"{"detail": [{"msg": "field required"}, {"msg": "bad units"}]}"#.utf8)), "field required; bad units")
+    }
+
+    func testUnauthorizedPointsToTokenSetting() {
+        XCTAssertTrue(PrintError.server(status: 401, message: "Invalid token").localizedDescription.contains("print token in Settings"))
+    }
+
     func testRejectsNonSTLResponse() async throws {
         let mesh = directory.appendingPathComponent("Room 1.usdz")
         try Data("usdz".utf8).write(to: mesh)
@@ -100,7 +125,7 @@ final class PrintServiceTests: XCTestCase {
     private func service() throws -> PrintService {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [StubProtocol.self]
-        return try PrintService(baseURL: "http://print.test", session: URLSession(configuration: configuration))
+        return try PrintService(baseURL: "http://print.test", token: nil, session: URLSession(configuration: configuration))
     }
 }
 

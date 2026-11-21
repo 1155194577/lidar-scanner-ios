@@ -4,21 +4,30 @@ struct HomeView: View {
     @EnvironmentObject private var store: ScanStore
     @State private var activeMode: ScanKind?
     @State private var showsSettings = false
+    @State private var showsPhotoPrint = false
 
     var body: some View {
         NavigationStack {
             List {
                 Section {
                     ModeRow(
-                        kind: .room,
+                        systemImage: ScanKind.room.systemImage,
                         title: "Room Scan",
-                        subtitle: "Walls, doors, windows and furniture as a 3D floor model (RoomPlan)."
+                        subtitle: "Walls, doors, windows and furniture as a 3D floor model (RoomPlan).",
+                        identifier: "roomScanButton"
                     ) { activeMode = .room }
                     ModeRow(
-                        kind: .object,
+                        systemImage: ScanKind.object.systemImage,
                         title: "Object Scan",
-                        subtitle: "A textured, photoreal 3D model of an object you walk around (Object Capture)."
+                        subtitle: "A textured, photoreal 3D model of an object you walk around (Object Capture).",
+                        identifier: "objectScanButton"
                     ) { activeMode = .object }
+                    ModeRow(
+                        systemImage: "camera.viewfinder",
+                        title: "Photo Print",
+                        subtitle: "One photo plus the object's LiDAR-measured height, turned into a printable STL.",
+                        identifier: "photoPrintButton"
+                    ) { showsPhotoPrint = true }
                 } header: {
                     Text("New Scan")
                 } footer: {
@@ -55,6 +64,13 @@ struct HomeView: View {
             }
         }
         .sheet(isPresented: $showsSettings) { SettingsView() }
+        .fullScreenCover(isPresented: $showsPhotoPrint) {
+            if DeviceSupport.photoPrint {
+                PhotoPrintView()
+            } else {
+                UnsupportedView(feature: "Photo Print", requirement: "an iPhone or iPad with a LiDAR sensor")
+            }
+        }
         .fullScreenCover(item: $activeMode, onDismiss: store.reload) { kind in
             switch kind {
             case .room:
@@ -75,15 +91,16 @@ extension ScanKind: Identifiable {
 }
 
 private struct ModeRow: View {
-    let kind: ScanKind
+    let systemImage: String
     let title: String
     let subtitle: String
+    let identifier: String
     let action: () -> Void
 
     var body: some View {
         Button(action: action) {
             HStack(spacing: 16) {
-                Image(systemName: kind.systemImage)
+                Image(systemName: systemImage)
                     .font(.title)
                     .foregroundStyle(.tint)
                     .frame(width: 44)
@@ -98,7 +115,7 @@ private struct ModeRow: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .accessibilityIdentifier("\(kind.rawValue.lowercased())ScanButton")
+        .accessibilityIdentifier(identifier)
     }
 }
 
