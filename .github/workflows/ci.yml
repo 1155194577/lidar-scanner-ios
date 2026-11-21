@@ -52,3 +52,10 @@ jobs:
       - name: Print stub log
         if: always()
         run: cat print_stub.log || true
+      - name: Summarize XCTest failures
+        if: failure()
+        run: |
+          test_log="$RUNNER_TEMP/xcodebuild-test.log"
+          if [ -f "$test_log" ]; then
+            grep -E 'error:|Test Case .* failed' "$test_log" || true
+          fi
