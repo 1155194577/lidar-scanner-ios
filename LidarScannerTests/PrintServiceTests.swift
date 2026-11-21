@@ -830,10 +830,10 @@ final class PrintServiceTests: XCTestCase {
             case "/print/uploads/job-1":
                 XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer abc")
                 XCTAssertEqual(uploader.puts.map(\.name), ["photo"])
-                return (200, "application/json", Data(#"{"job_id":"job-1","uploads":{"photo":{"file_id":"job-1/photo","get_url":"https://s3.test/preview?fresh=1"}}}"#.utf8))
+                return (200, "application/json", Data(#"{"job_id":"job-1","files":{"photo":{"file_id":"job-1/photo","size":4,"get_url":"https://s3.test/preview?fresh=1"}}}"#.utf8))
             case "/print":
                 XCTAssertTrue(String(decoding: Self.body(of: request), as: UTF8.self).contains("name=\"uploaded\"\r\n\r\nphoto"))
-                return (200, "application/x-ndjson", Data((#"{"type":"done","stl_url":"https://s3.test/result.stl?signature=1","stl_file_id":"job-1/result.stl","stl_expires_in":900}"# + "\n").utf8))
+                return (200, "application/x-ndjson", Data((#"{"type":"done","stl_url":"https://s3.test/result.stl?signature=1","stl_file_id":"job-1/result.stl","stl_expires_in":3600,"stl_base64":"bGVnYWN5"}"# + "\n").utf8))
             case "/result.stl":
                 XCTAssertNil(request.value(forHTTPHeaderField: "Authorization"))
                 XCTAssertEqual(request.url?.query, "signature=1")
@@ -900,7 +900,7 @@ final class PrintServiceTests: XCTestCase {
             XCTAssertEqual(request.httpMethod, "GET")
             confirmationCount += 1
             return (200, "application/json", Data("""
-            {"uploads":{"photo":{"file_id":"photo","get_url":"https://s3.test/preview?v=\(confirmationCount)"}}}
+            {"files":{"photo":{"file_id":"photo","size":4,"get_url":"https://s3.test/preview?v=\(confirmationCount)"}}}
             """.utf8))
         }
         manager.start(input: .photo(Data("jpeg".utf8), heightMM: 10), name: "Photo", kind: "photo")

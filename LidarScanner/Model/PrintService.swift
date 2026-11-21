@@ -246,13 +246,13 @@ struct PrintService {
         var request = URLRequest(url: uploadsEndpoint.appendingPathComponent(jobID))
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         if let token { request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization") }
-        struct Confirmation: Decodable { let uploads: [String: UploadReference] }
+        struct Confirmation: Decodable { let files: [String: UploadReference] }
         let (data, response) = try await session.data(for: request)
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
         guard (200..<300).contains(status) else {
             throw PrintError.server(status: status, message: Self.errorMessage(from: data))
         }
-        return try JSONDecoder().decode(Confirmation.self, from: data).uploads
+        return try JSONDecoder().decode(Confirmation.self, from: data).files
     }
 
     func prepareUploads(for input: PrintInput, jobID: String, state: PrintUploadState,

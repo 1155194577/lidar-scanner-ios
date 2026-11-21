@@ -617,7 +617,9 @@ final class LidarScannerUITests: XCTestCase {
         XCTAssertTrue(printButton.waitForExistence(timeout: 5))
         let scanName = String(printButton.identifier.dropFirst("print-".count))
         printButton.tap()
-        assertShareSheet(in: app, captionPrefix: scanName, errorAlert: "Couldn't print scan", timeout: 360)
+        submitLiveUpload(in: app)
+        assertLiveSTLViewer(in: app)
+        assertShareSheet(in: app, captionPrefix: scanName, errorAlert: "Couldn't print scan", timeout: 360, viewerOpen: true)
         attachScreenshot(app, name: "live-scan-stl")
         app.otherElements["ActivityListView"].buttons["header.closeButton"].firstMatch.tapIfExists()
         app.swipeDown(velocity: .fast)
@@ -629,9 +631,53 @@ final class LidarScannerUITests: XCTestCase {
         app.navigationBars.buttons.element(boundBy: 0).tap()
         app.buttons["photoPrintButton"].tap()
         XCTAssertTrue(app.staticTexts["photoHeight"].waitForExistence(timeout: 5))
+        let uploadStarted = Date()
         app.buttons["takePhotoAndPrintButton"].tap()
-        assertShareSheet(in: app, captionPrefix: "Photo ", errorAlert: "Couldn't print photo", timeout: 360)
+        XCTAssertTrue(app.images["uploadedPhotoPreview"].waitForExistence(timeout: 120), "Live S3 preview did not load")
+        let fileID = app.staticTexts["uploadedFileID"].label
+        let jobID = try XCTUnwrap(fileID.split(separator: "/").compactMap { UUID(uuidString: String($0)) }.first)
+        print("[live print] S3 photo preview loaded in \(Int(Date().timeIntervalSince(uploadStarted))) s")
+        savePrintScreenshot("live-s3-upload-preview", app: app)
+        let printStarted = Date()
+        submitLiveUpload(in: app)
+        assertLiveSTLViewer(in: app)
+        print("[live print] STL viewer opened in \(Int(Date().timeIntervalSince(printStarted))) s after confirmation")
+        savePrintScreenshot("live-stl-3d-viewer", app: app)
+        try assertLiveSTLLink(baseURL: url, token: token, jobID: jobID)
+        assertShareSheet(in: app, captionPrefix: "Photo ", errorAlert: "Couldn't print photo", timeout: 360, viewerOpen: true)
         attachScreenshot(app, name: "live-photo-stl")
+    }
+
+    private func submitLiveUpload(in app: XCUIApplication) {
+        let confirm = app.buttons["confirmS3Print"]
+        XCTAssertTrue(confirm.waitForExistence(timeout: 120), "Live S3 upload did not reach confirmation")
+        confirm.tap()
+    }
+
+    private func assertLiveSTLViewer(in app: XCUIApplication) {
+        let viewer = app.descendants(matching: .any)["stlViewer"].firstMatch
+        XCTAssertTrue(viewer.waitForExistence(timeout: 360), "Live STL did not open in the 3D viewer")
+    }
+
+    private func assertLiveSTLLink(baseURL: String, token: String, jobID: UUID) throws {
+        let endpoint = try XCTUnwrap(URL(string: baseURL)).appendingPathComponent("print").appendingPathComponent(jobID.uuidString)
+        var request = URLRequest(url: endpoint)
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/x-ndjson", forHTTPHeaderField: "Accept")
+        let replay = expectation(description: "live done event includes a signed STL")
+        URLSession.shared.dataTask(with: request) { data, response, _ in
+            defer { replay.fulfill() }
+            XCTAssertEqual((response as? HTTPURLResponse)?.statusCode, 200)
+            let events = String(decoding: data ?? Data(), as: UTF8.self).split(whereSeparator: \.isNewline)
+            let done = events.compactMap { try? JSONSerialization.jsonObject(with: Data($0.utf8)) as? [String: Any] }
+                .first { $0["type"] as? String == "done" }
+            if let link = done?["stl_url"] as? String, URL(string: link)?.scheme == "https" {
+                print("[live print] replayed done event included stl_url")
+            } else {
+                XCTFail("The live done event did not include a signed STL URL")
+            }
+        }.resume()
+        wait(for: [replay], timeout: 60)
     }
 
     /// Finished print jobs in the banner can cover the My Scans row, so dismiss them first.
@@ -651,8 +697,9 @@ final class LidarScannerUITests: XCTestCase {
         let app = launch(["-UITestResetScans", "-UITestFakeFaceCapture", "-printBaseURL", url, "-printAPIToken", token])
         app.buttons["faceScanButton"].tap()
         XCTAssertTrue(app.staticTexts["bustHeight"].waitForExistence(timeout: 5))
-        app.buttons["captureFaceButton"].tap()
-        openPrintResult(in: app, timeout: 600)
+        tapCaptureFace(in: app)
+        submitLiveUpload(in: app)
+        assertLiveSTLViewer(in: app)
         let save = app.buttons["Save to My Scans"]
         XCTAssertTrue(save.waitForExistence(timeout: 15))
         attachScreenshot(app, name: "live-face-stl")
@@ -683,8 +730,12 @@ final class LidarScannerUITests: XCTestCase {
         share.tap()
     }
 
-    private func assertShareSheet(in app: XCUIApplication, captionPrefix: String, errorAlert: String, timeout: TimeInterval) {
-        tapSharePrintResult(in: app, timeout: timeout)
+    private func assertShareSheet(in app: XCUIApplication, captionPrefix: String, errorAlert: String, timeout: TimeInterval, viewerOpen: Bool = false) {
+        if viewerOpen {
+            app.buttons["Share STL"].tap()
+        } else {
+            tapSharePrintResult(in: app, timeout: timeout)
+        }
         let shareSheet = app.otherElements["ActivityListView"]
         let alert = app.alerts[errorAlert]
         let deadline = Date().addingTimeInterval(timeout)
