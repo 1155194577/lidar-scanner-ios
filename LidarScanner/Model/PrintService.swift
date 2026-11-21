@@ -259,13 +259,23 @@ struct PrintService {
         var request = URLRequest(url: uploadsEndpoint.appendingPathComponent(jobID))
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         if let token { request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization") }
-        struct Confirmation: Decodable { let uploads: [String: UploadReference] }
+        struct Confirmation: Decodable {
+            let files: [String: UploadReference]
+
+            private enum CodingKeys: String, CodingKey { case files, uploads }
+
+            init(from decoder: Decoder) throws {
+                let container = try decoder.container(keyedBy: CodingKeys.self)
+                files = try container.decodeIfPresent([String: UploadReference].self, forKey: .files)
+                    ?? container.decode([String: UploadReference].self, forKey: .uploads)
+            }
+        }
         let (data, response) = try await session.data(for: request)
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
         guard (200..<300).contains(status) else {
             throw PrintError.server(status: status, message: Self.errorMessage(from: data))
         }
-        return try JSONDecoder().decode(Confirmation.self, from: data).uploads
+        return try JSONDecoder().decode(Confirmation.self, from: data).files
     }
 
     func prepareUploads(for input: PrintInput, jobID: String, state: PrintUploadState,
@@ -278,7 +288,7 @@ struct PrintService {
         guard signedUploads, !state.legacy else { return nil }
         let files = payload.files
         let pending = files.filter { !state.isUploaded($0.name) }
-        if !pending.isEmpty, !(try await upload(pending, jobID: jobID, state: state, onProgress: onProgress)) {
+        if !pending.isEmpty, !(try await uploadOrFallBack(pending, jobID: jobID, state: state, onProgress: onProgress)) {
             state.legacy = true
             return nil
         }
@@ -290,7 +300,9 @@ struct PrintService {
             state.forget(files.map(\.name))
             throw PrintError.server(status: status, message: message)
         }
-        guard files.allSatisfy({ references[$0.name] != nil }) else {
+        let missing = files.map(\.name).filter { references[$0] == nil }
+        guard missing.isEmpty else {
+            state.forget(missing)
             throw PrintError.unexpectedResponse("missing uploaded files")
         }
         return references

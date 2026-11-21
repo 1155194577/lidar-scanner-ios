@@ -9,24 +9,25 @@ struct PrintUploadPreview: View {
     let onPrint: () -> Void
     @State private var error: String?
     @State private var refreshing = false
+    @State private var loadingPhoto = true
+    @State private var photo: UIImage?
 
     private var mainUpload: PrintService.UploadReference? { references["photo"] ?? references["mesh"] }
 
     var body: some View {
         NavigationStack {
             List {
-                if let photo = references["photo"] {
+                if references["photo"] != nil {
                     Section("Uploaded photo") {
-                        AsyncImage(url: photo.get_url) { phase in
-                            switch phase {
-                            case .success(let image):
-                                image.resizable().scaledToFit()
+                        Group {
+                            if let photo {
+                                Image(uiImage: photo).resizable().scaledToFit()
                                     .accessibilityLabel("Uploaded photo preview")
                                     .accessibilityIdentifier("uploadedPhotoPreview")
-                            case .failure:
-                                Label("Couldn’t load photo from storage.", systemImage: "exclamationmark.icloud")
-                            default:
+                            } else if loadingPhoto {
                                 ProgressView("Loading photo from storage…")
+                            } else {
+                                Label("Couldn’t load photo from storage.", systemImage: "exclamationmark.icloud")
                             }
                         }
                         .frame(maxWidth: .infinity)
@@ -48,7 +49,7 @@ struct PrintUploadPreview: View {
                         Button("Refresh Link", systemImage: "arrow.clockwise") {
                             Task { await refresh() }
                         }
-                        .disabled(refreshing)
+                        .disabled(refreshing || loadingPhoto)
                         if let error { Text(error).foregroundStyle(.red) }
                     }
                 }
@@ -56,7 +57,10 @@ struct PrintUploadPreview: View {
             .navigationTitle("Upload Confirmed")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .cancellationAction) { Button("Close") { dismiss() } }
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Close") { dismiss() }
+                        .accessibilityIdentifier("closePrintUploadPreview")
+                }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Print", action: onPrint)
                         .bold()
@@ -64,6 +68,7 @@ struct PrintUploadPreview: View {
                 }
             }
         }
+        .task { await loadPhoto(refreshOnForbidden: true) }
     }
 
     private func refresh() async {
@@ -72,8 +77,32 @@ struct PrintUploadPreview: View {
         do {
             references = try await manager.refreshUpload(job)
             error = nil
+            await loadPhoto(refreshOnForbidden: false)
         } catch {
             self.error = error.localizedDescription
+        }
+    }
+
+    private func loadPhoto(refreshOnForbidden: Bool) async {
+        defer { loadingPhoto = false }
+        guard let url = references["photo"]?.get_url else { return }
+        loadingPhoto = true
+        photo = nil
+        do {
+            func fetch(_ url: URL) async throws -> (Data, URLResponse) {
+                try await URLSession.shared.data(for: URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData))
+            }
+            var (data, response) = try await fetch(url)
+            if refreshOnForbidden, (response as? HTTPURLResponse)?.statusCode == 403 {
+                references = try await manager.refreshUpload(job)
+                guard let freshURL = references["photo"]?.get_url else { return }
+                (data, response) = try await fetch(freshURL)
+            }
+            guard !Task.isCancelled, let http = response as? HTTPURLResponse,
+                  (200..<300).contains(http.statusCode) else { return }
+            photo = UIImage(data: data)
+        } catch {
+            if !Task.isCancelled { self.error = error.localizedDescription }
         }
     }
 }
