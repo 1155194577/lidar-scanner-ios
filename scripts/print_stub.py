@@ -5,7 +5,8 @@ Mirrors the live contract: POST /print takes multipart form data with either
 `mesh` (an .obj, .ply or .usdz file in metres) or `photo` (.jpg/.png) plus an
 optional `height_mm` and, for photo + depth fusion, `depth` (float32 metres),
 `depth_width`, `depth_height`, `intrinsics`, `image_orientation` and optional
-`depth_confidence`, `camera_transform`, `object_points`. It answers with a small STL cube as `model/stl` and an
+`depth_confidence`, `object_points`; any photo may carry `camera_transform` with
+`image_orientation`. It answers with a small STL cube as `model/stl` and an
 `X-Print-Report` JSON header. Errors are JSON `{"detail": ...}`. With --token,
 requests must carry `Authorization: Bearer <token>` or get a 401. GET /last returns a JSON summary
 of the last accepted print request, for UI tests.
@@ -59,6 +60,20 @@ def parse_multipart(content_type, body):
     return parts
 
 
+def check_pose(parts):
+    """Validates `image_orientation` and the optional `camera_transform`."""
+    try:
+        orientation = int(parts["image_orientation"][1].decode())
+        transform = json.loads(parts["camera_transform"][1].decode()) if "camera_transform" in parts else None
+    except (KeyError, TypeError, ValueError):
+        raise ValueError("image_orientation and camera_transform must be a number and JSON")
+    if orientation not in (1, 3, 6, 8):
+        raise ValueError("image_orientation must be 1, 3, 6 or 8")
+    if transform is not None and (not isinstance(transform, list) or len(transform) != 16):
+        raise ValueError("camera_transform must be 16 numbers")
+    return {"image_orientation": orientation, "camera_transform": transform}
+
+
 def check_depth(parts):
     """Validates the photo + depth fields and returns a summary of them."""
     def field(name, required=True):
@@ -70,9 +85,7 @@ def check_depth(parts):
 
     try:
         width, height = int(field("depth_width")), int(field("depth_height"))
-        orientation = int(field("image_orientation"))
         intrinsics = json.loads(field("intrinsics"))
-        transform = json.loads(field("camera_transform", False) or "null")
         points = json.loads(field("object_points", False) or "[]")
     except (TypeError, ValueError):
         raise ValueError("depth fields must be numbers or JSON")
@@ -80,16 +93,11 @@ def check_depth(parts):
         raise ValueError("depth must be depth_width x depth_height float32 values")
     if "depth_confidence" in parts and len(parts["depth_confidence"][1]) != width * height:
         raise ValueError("depth_confidence must be depth_width x depth_height bytes")
-    if orientation not in (1, 3, 6, 8):
-        raise ValueError("image_orientation must be 1, 3, 6 or 8")
     if not isinstance(intrinsics, dict) or not all(k in intrinsics for k in ("fx", "fy", "cx", "cy", "width", "height")):
         raise ValueError("intrinsics must have fx, fy, cx, cy, width and height")
-    if transform is not None and (not isinstance(transform, list) or len(transform) != 16):
-        raise ValueError("camera_transform must be 16 numbers")
     return {
-        "depth_width": width, "depth_height": height, "image_orientation": orientation,
-        "intrinsics": intrinsics, "object_points": points,
-        "has_confidence": "depth_confidence" in parts, "has_camera_transform": transform is not None,
+        "depth_width": width, "depth_height": height, "intrinsics": intrinsics,
+        "object_points": points, "has_confidence": "depth_confidence" in parts,
     }
 
 
@@ -151,16 +159,22 @@ class Handler(BaseHTTPRequestHandler):
                 if height <= 0:
                     return self.error(422, "height_mm must be a positive number")
                 source += ", height %g mm" % height
+            summary = {}
+            if "camera_transform" in parts or "depth" in parts:
+                try:
+                    summary.update(check_pose(parts))
+                except ValueError as error:
+                    return self.error(422, str(error))
             if "depth" in parts:
                 try:
-                    summary = check_depth(parts)
+                    summary.update(check_depth(parts))
                 except ValueError as error:
                     return self.error(422, str(error))
                 source += ", depth %(depth_width)dx%(depth_height)d" % summary
             stem = "photo"
 
         Handler.last_request = {"fields": sorted(parts), "source": source}
-        if "depth" in parts:
+        if "photo" in parts:
             Handler.last_request.update(summary)
 
         self.log_message("print request: %s", source)

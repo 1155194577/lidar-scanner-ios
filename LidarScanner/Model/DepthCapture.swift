@@ -12,6 +12,15 @@ struct CameraIntrinsics: Codable, Equatable {
     var height: Int
 }
 
+/// Where the camera was for the uploaded photo, so the server knows which way is up.
+struct CameraPose: Equatable {
+    /// Column-major camera-to-world matrix whose camera x/y axes match the uploaded photo's pixel axes
+    /// (x right, y up, z towards the viewer); world +Y is up.
+    var cameraTransform: [Float]
+    /// How to rotate the photo upright (EXIF orientation 1, 3, 6 or 8); 1 when the photo is already upright.
+    var imageOrientation: CGImagePropertyOrientation
+}
+
 /// LiDAR data from the frame the photo was taken from. Everything is in sensor orientation, like the uploaded photo.
 struct DepthCapture: Equatable {
     /// Metres, row-major; NaN where there is no reading.
@@ -22,12 +31,8 @@ struct DepthCapture: Equatable {
     var height: Int
     /// For the uploaded photo; the depth map shares its field of view.
     var intrinsics: CameraIntrinsics
-    /// Column-major camera-to-world matrix (ARKit camera axes: x right, y up, z towards the viewer); world +Y is up.
-    var cameraTransform: [Float]
     /// The measured base and top of the object, projected into the photo's pixels.
     var objectPoints: [CGPoint]
-    /// How to rotate the photo upright (EXIF orientation 1, 3, 6 or 8).
-    var imageOrientation: CGImagePropertyOrientation
 
     var depthData: Data {
         depth.withUnsafeBufferPointer { Data(buffer: $0) }

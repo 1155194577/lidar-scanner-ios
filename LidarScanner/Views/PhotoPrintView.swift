@@ -156,14 +156,14 @@ final class PhotoPrintModel: ObservableObject {
 
     func print() {
         guard let height = heightMM else { return }
-        guard let (photo, depth) = capture() else {
+        guard let (photo, pose, depth) = capture() else {
             errorMessage = "Couldn't take the photo. Try again."
             return
         }
         isPrinting = true
         printTask = Task {
             do {
-                let url = try await PrintService().requestSTL(for: .photo(photo, heightMM: height, depth: depth), name: Self.fileName())
+                let url = try await PrintService().requestSTL(for: .photo(photo, heightMM: height, pose: pose, depth: depth), name: Self.fileName())
                 try Task.checkCancellation()
                 printedModel = PrintedModel(url: url)
             } catch is CancellationError {
@@ -180,22 +180,35 @@ final class PhotoPrintModel: ObservableObject {
         printTask?.cancel()
     }
 
-    /// The current frame as a JPEG plus its LiDAR depth. With depth the photo stays in sensor orientation
+    /// The current frame as a JPEG plus the camera pose and LiDAR depth. With depth the photo stays in sensor orientation
     /// (the server rotates it by `image_orientation`); without it the photo is rotated upright.
-    private func capture() -> (Data, DepthCapture?)? {
+    private func capture() -> (Data, CameraPose, DepthCapture?)? {
         if isFake {
             guard let photo = Self.sampleImage.jpegData(compressionQuality: 0.9) else { return nil }
-            return (photo, Self.sampleDepth)
+            return (photo, Self.samplePose, Self.sampleDepth)
         }
         guard let arView, let frame = arView.session.currentFrame else { return nil }
         let interface = arView.window?.windowScene?.interfaceOrientation ?? .portrait
         let orientation = Self.photoOrientation(for: interface)
-        let depth = frame.depthCapture(orientation: orientation, objectPoints: [base, top].compactMap { $0 })
+        let depth = frame.depthCapture(objectPoints: [base, top].compactMap { $0 })
         var image = CIImage(cvPixelBuffer: frame.capturedImage)
-        if depth == nil { image = image.oriented(orientation) }
+        let pose: CameraPose
+        if depth != nil {
+            pose = CameraPose(cameraTransform: frame.camera.transform.columnMajor, imageOrientation: orientation)
+        } else {
+            image = image.oriented(orientation)
+            // ARKit's camera for the interface orientation, whose axes match the upright photo.
+            pose = CameraPose(cameraTransform: simd_inverse(frame.camera.viewMatrix(for: interface)).columnMajor, imageOrientation: .up)
+        }
         guard let photo = CIContext().jpegRepresentation(of: image, colorSpace: CGColorSpace(name: CGColorSpace.sRGB)!, options: [:]) else { return nil }
-        return (photo, depth)
+        return (photo, pose, depth)
     }
+
+    /// Stand-in pose for simulator UI tests: looking 50° down at the object.
+    static let samplePose = CameraPose(
+        cameraTransform: [1, 0, 0, 0, 0, 0.6428, -0.766, 0, 0, 0.766, 0.6428, 0, 0, 0.3, 0.25, 1],
+        imageOrientation: .up
+    )
 
     /// Stand-in depth for simulator UI tests: a flat surface 0.5 m away, matching the upright sample photo.
     static let sampleDepth = DepthCapture(
@@ -204,9 +217,7 @@ final class PhotoPrintModel: ObservableObject {
         width: 48,
         height: 64,
         intrinsics: CameraIntrinsics(fx: 700, fy: 700, cx: 300, cy: 400, width: 600, height: 800),
-        cameraTransform: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1],
-        objectPoints: [CGPoint(x: 300, y: 560), CGPoint(x: 300, y: 300)],
-        imageOrientation: .up
+        objectPoints: [CGPoint(x: 300, y: 560), CGPoint(x: 300, y: 300)]
     )
 
     /// The camera buffer is in the sensor's landscape-right orientation; rotate it to match what the user sees.
@@ -235,24 +246,27 @@ final class PhotoPrintModel: ObservableObject {
     }
 }
 
+private extension simd_float4x4 {
+    var columnMajor: [Float] {
+        [columns.0, columns.1, columns.2, columns.3].flatMap { [$0.x, $0.y, $0.z, $0.w] }
+    }
+}
+
 private extension ARFrame {
-    func depthCapture(orientation: CGImagePropertyOrientation, objectPoints: [SIMD3<Float>]) -> DepthCapture? {
+    func depthCapture(objectPoints: [SIMD3<Float>]) -> DepthCapture? {
         guard let sceneDepth = smoothedSceneDepth ?? sceneDepth, let depth = Self.values(Float32.self, of: sceneDepth.depthMap) else { return nil }
         let k = camera.intrinsics
         let width = camera.imageResolution.width, height = camera.imageResolution.height
         // The measured world points projected into this frame, so they stay on the object if the phone moved since the taps.
         // `.landscapeRight` is the sensor's native orientation, i.e. the unrotated photo's pixels.
         let points = objectPoints.map { camera.projectPoint($0, orientation: .landscapeRight, viewportSize: camera.imageResolution) }
-        let t = camera.transform
         return DepthCapture(
             depth: depth,
             confidence: sceneDepth.confidenceMap.flatMap { Self.values(UInt8.self, of: $0) },
             width: CVPixelBufferGetWidth(sceneDepth.depthMap),
             height: CVPixelBufferGetHeight(sceneDepth.depthMap),
             intrinsics: CameraIntrinsics(fx: Double(k[0][0]), fy: Double(k[1][1]), cx: Double(k[2][0]), cy: Double(k[2][1]), width: Int(width), height: Int(height)),
-            cameraTransform: [t.columns.0, t.columns.1, t.columns.2, t.columns.3].flatMap { [$0.x, $0.y, $0.z, $0.w] },
-            objectPoints: points,
-            imageOrientation: orientation
+            objectPoints: points
         )
     }
 

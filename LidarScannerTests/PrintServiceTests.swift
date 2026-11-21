@@ -64,12 +64,11 @@ final class PrintServiceTests: XCTestCase {
             width: 2,
             height: 1,
             intrinsics: CameraIntrinsics(fx: 1400, fy: 1400, cx: 960, cy: 720, width: 1920, height: 1440),
-            cameraTransform: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0.1, 1.2, -0.3, 1],
-            objectPoints: [CGPoint(x: 960.04, y: 1000), CGPoint(x: 955.5, y: 400)],
-            imageOrientation: .right
+            objectPoints: [CGPoint(x: 960.04, y: 1000), CGPoint(x: 955.5, y: 400)]
         )
+        let pose = CameraPose(cameraTransform: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0.1, 1.2, -0.3, 1], imageOrientation: .right)
         let request = try PrintService(baseURL: "http://localhost:8765")
-            .makeRequest(for: .photo(Data("jpeg".utf8), heightMM: 120, depth: depth), boundary: "B")
+            .makeRequest(for: .photo(Data("jpeg".utf8), heightMM: 120, pose: pose, depth: depth), boundary: "B")
         let body = try XCTUnwrap(request.httpBody)
         let text = String(decoding: body, as: UTF8.self)
 
@@ -84,6 +83,16 @@ final class PrintServiceTests: XCTestCase {
         XCTAssertTrue(text.contains("name=\"camera_transform\"\r\n\r\n[1,0,0,0,0,1,0,0,0,0,1,0,0.1"))
         XCTAssertTrue(text.contains("name=\"object_points\"\r\n\r\n[[960,1000],[955.5,400]]\r\n"))
         XCTAssertTrue(text.contains("name=\"height_mm\"\r\n\r\n120.0\r\n"))
+    }
+
+    func testPhotoWithoutDepthStillSendsPose() throws {
+        let pose = CameraPose(cameraTransform: [1, 0, 0, 0, 0, 0.5, -0.5, 0, 0, 0.5, 0.5, 0, 0, 1, 0, 1], imageOrientation: .up)
+        let request = try PrintService(baseURL: "http://localhost:8765")
+            .makeRequest(for: .photo(Data("jpeg".utf8), heightMM: 80, pose: pose), boundary: "B")
+        let text = String(decoding: try XCTUnwrap(request.httpBody), as: UTF8.self)
+        XCTAssertTrue(text.contains("name=\"image_orientation\"\r\n\r\n1\r\n"))
+        XCTAssertTrue(text.contains("name=\"camera_transform\"\r\n\r\n[1,0,0,0,0,0.5,-0.5,0,0,0.5,0.5,0,0,1,0,1]\r\n"))
+        XCTAssertFalse(text.contains("name=\"depth\""))
     }
 
     func testSavesReturnedSTL() async throws {
