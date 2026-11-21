@@ -95,7 +95,7 @@ final class PrintJobManager: ObservableObject {
     }
 
     func retry(_ job: PrintJob) {
-        if job.retryFromStart || !job.accepted {
+        if job.retryFromStart {
             guard let input = inputs[job.id] else {
                 if let index = jobs.firstIndex(where: { $0.id == job.id }) {
                     jobs[index].error = "Original print input is no longer available; print again."
@@ -265,7 +265,7 @@ final class PrintJobManager: ObservableObject {
             jobs[index].error = PrintService.failureMessage(error)
             if case PrintError.jobFailed = error { jobs[index].retryFromStart = true }
             if case PrintError.invalidBaseURL = error { jobs[index].retryFromStart = true }
-            if case PrintError.server(let status, _) = error, status != 404 { jobs[index].retryFromStart = true }
+            if case PrintError.server(422, _) = error { jobs[index].retryFromStart = true }
         }
         persist()
         tasks.removeValue(forKey: id)?.cancel()

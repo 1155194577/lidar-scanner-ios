@@ -381,6 +381,32 @@ final class PrintServiceTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: raw.path))
     }
 
+    @MainActor
+    func testRetryDroppedSubmissionPreservesClientJobID() async throws {
+        let suite = "PrintJobs-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        var retrying = false
+        StubProtocol.handler = { request in
+            if retrying { return (200, "model/stl", Data("stl".utf8)) }
+            if request.httpMethod == "POST" { return (200, "application/x-ndjson", Data()) }
+            return (404, "application/json", Data(#"{"detail":"unknown job"}"#.utf8))
+        }
+        let manager = PrintJobManager(defaults: defaults, notifications: false, makeService: { _ in try self.service() })
+        manager.start(input: .photo(Data([1]), heightMM: 10), name: "Dropped", kind: "photo")
+        let failed = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in manager.jobs.first?.error != nil }, object: nil)
+        await fulfillment(of: [failed], timeout: 4)
+        let job = try XCTUnwrap(manager.jobs.first)
+        XCTAssertFalse(job.accepted)
+        retrying = true
+        manager.retry(job)
+        XCTAssertEqual(manager.jobs.first?.id, job.id)
+        let ready = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in manager.jobs.first?.result != nil }, object: nil)
+        await fulfillment(of: [ready], timeout: 2)
+        XCTAssertEqual(manager.jobs.first?.id, job.id)
+        manager.dismiss(manager.jobs[0])
+    }
+
     func testPersistedResultUsesRelativePathAndMigratesOldContainer() throws {
         let legacy = #"{"id":"job","name":"Cube","kind":"photo","baseURL":"http://print.test","result":"file:///old-container/Library/Application%20Support/PrintJobs/job/Cube.stl"}"#
         let job = try JSONDecoder().decode(PrintJob.self, from: Data(legacy.utf8))
