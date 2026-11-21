@@ -7,6 +7,7 @@ extension View {
 private struct PrintJobBannerModifier: ViewModifier {
     let visible: Bool
     @EnvironmentObject private var manager: PrintJobManager
+    @EnvironmentObject private var store: ScanStore
     @State private var selected: PrintedModel?
 
     func body(content: Content) -> some View {
@@ -32,8 +33,8 @@ private struct PrintJobBannerModifier: ViewModifier {
                                                 .accessibilityIdentifier("retryPrintButton")
                                         }
                                     } else if let url = job.result {
-                                        Button { selected = PrintedModel(url: url) } label: {
-                                            Label("STL ready — Share", systemImage: "square.and.arrow.up")
+                                        Button { selected = printedModel(for: job, url: url) } label: {
+                                            Label("STL ready — Save or Share", systemImage: "square.and.arrow.up")
                                         }
                                         .accessibilityIdentifier("printResultButton")
                                     } else {
@@ -64,9 +65,15 @@ private struct PrintJobBannerModifier: ViewModifier {
                 }
             }
             .sheet(item: $selected) { model in
-                ActivityView(items: [model.url]) { selected = nil }
-                    .presentationDetents([.medium, .large])
-                    .ignoresSafeArea()
+                PrintResultView(model: model)
             }
+    }
+
+    private func printedModel(for job: PrintJob, url: URL) -> PrintedModel {
+        store.reload()
+        let source = job.sourceScanFile.flatMap { file in
+            store.scans.first { !$0.kind.isStandalonePrint && $0.url.lastPathComponent == file }
+        }
+        return PrintedModel(url: url, sourceScan: source, kind: job.kind == "face" ? .face : .photo)
     }
 }

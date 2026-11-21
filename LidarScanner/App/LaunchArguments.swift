@@ -6,6 +6,7 @@ enum LaunchArguments {
     static let seedSampleScans = "-UITestSeedSampleScans"
     static let forceUnsupported = "-UITestForceUnsupported"
     static let fakePhotoCapture = "-UITestFakePhotoCapture"
+    static let fakeFaceCapture = "-UITestFakeFaceCapture"
     /// Pass as `-UITestFakePitch <degrees>`; launch arguments in this form land in UserDefaults.
     static let fakePitchKey = "UITestFakePitch"
 

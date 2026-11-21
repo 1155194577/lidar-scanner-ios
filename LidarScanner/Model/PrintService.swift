@@ -12,6 +12,7 @@ struct PrintProgress: Equatable, Codable {
 enum PrintInput {
     case mesh(URL)
     case photo(Data, heightMM: Double, pose: CameraPose? = nil, depth: DepthCapture? = nil)
+    case face(FaceCapture)
 }
 
 /// `/photo-check`'s verdict on a Photo Print shot, from the phone's pitch plus a vision model.
@@ -112,9 +113,11 @@ struct PrintService {
             if let depth {
                 try Self.addDepth(depth, to: &form)
             }
+        case .face(let capture):
+            try capture.addFields(to: &form)
         }
 
-        return post(form, to: endpoint, accept: "model/stl", timeout: 600)
+        return post(form, to: endpoint, accept: "application/x-ndjson, model/stl", timeout: 600)
     }
 
     func makePhotoCheckRequest(photo: Data, pose: CameraPose?, boundary: String = "Boundary-\(UUID().uuidString)") throws -> URLRequest {

@@ -5,7 +5,7 @@ import UIKit
 struct ScansListView: View {
     @EnvironmentObject private var store: ScanStore
     @EnvironmentObject private var printJobs: PrintJobManager
-    @State private var previewURL: URL?
+    @State private var selectedScan: ScanFile?
     @State private var error: (title: String, message: String)?
     @State private var pendingExport: ScanFile?
     @State private var stlFile: STLFile?
@@ -140,7 +140,7 @@ struct ScansListView: View {
     }
 
     private func startPrint(_ scan: ScanFile) {
-        printJobs.start(input: .mesh(scan.url), name: scan.name, kind: "scan")
+        printJobs.start(input: .mesh(scan.url), name: scan.name, kind: "scan", sourceScanFile: scan.url.lastPathComponent)
     }
 
     private func delete(_ scans: [ScanFile]) {

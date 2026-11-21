@@ -7,6 +7,8 @@ struct PrintJob: Identifiable, Codable {
     let name: String
     let kind: String
     let baseURL: String
+    /// File name of the saved scan a mesh print came from, so its STL can be saved with it.
+    var sourceScanFile: String?
     var progress = PrintProgress.uploading
     var resultPath: String?
     var result: URL? {
@@ -21,7 +23,7 @@ struct PrintJob: Identifiable, Codable {
 
 extension PrintJob {
     private enum CodingKeys: String, CodingKey {
-        case id, name, kind, baseURL, progress, resultPath, result, error, accepted, retryFromStart
+        case id, name, kind, baseURL, sourceScanFile, progress, resultPath, result, error, accepted, retryFromStart
     }
 
     init(from decoder: Decoder) throws {
@@ -30,6 +32,8 @@ extension PrintJob {
         name = try values.decode(String.self, forKey: .name)
         kind = try values.decode(String.self, forKey: .kind)
         baseURL = try values.decode(String.self, forKey: .baseURL)
+        // Scan jobs saved before the source file was stored are named after their USDZ.
+        sourceScanFile = try values.decodeIfPresent(String.self, forKey: .sourceScanFile) ?? (kind == "scan" ? name + ".usdz" : nil)
         progress = try values.decodeIfPresent(PrintProgress.self, forKey: .progress) ?? .uploading
         resultPath = try values.decodeIfPresent(String.self, forKey: .resultPath)
         if resultPath == nil, let legacy = try values.decodeIfPresent(URL.self, forKey: .result),
@@ -48,6 +52,7 @@ extension PrintJob {
         try values.encode(name, forKey: .name)
         try values.encode(kind, forKey: .kind)
         try values.encode(baseURL, forKey: .baseURL)
+        try values.encodeIfPresent(sourceScanFile, forKey: .sourceScanFile)
         try values.encode(progress, forKey: .progress)
         try values.encodeIfPresent(resultPath, forKey: .resultPath)
         try values.encodeIfPresent(error, forKey: .error)
@@ -90,8 +95,8 @@ final class PrintJobManager: ObservableObject {
         FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("PrintJobs", isDirectory: true)
     }
 
-    func start(input: PrintInput, name: String, kind: String) {
-        let job = PrintJob(id: UUID().uuidString, name: name, kind: kind, baseURL: PrintService.configuredBaseURL)
+    func start(input: PrintInput, name: String, kind: String, sourceScanFile: String? = nil) {
+        let job = PrintJob(id: UUID().uuidString, name: name, kind: kind, baseURL: PrintService.configuredBaseURL, sourceScanFile: sourceScanFile)
         jobs.append(job)
         inputs[job.id] = input
         tokens[job.id] = currentToken()
@@ -114,7 +119,7 @@ final class PrintJobManager: ObservableObject {
                 return
             }
             dismiss(job)
-            start(input: input, name: job.name, kind: job.kind)
+            start(input: input, name: job.name, kind: job.kind, sourceScanFile: job.sourceScanFile)
             return
         }
         guard let index = jobs.firstIndex(where: { $0.id == job.id }) else { return }
