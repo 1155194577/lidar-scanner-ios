@@ -71,31 +71,37 @@ struct HomeView: View {
         .printJobBanner(visible: activeMode == nil && !showsSettings)
         .sheet(isPresented: $showsSettings) { SettingsView().printJobBanner() }
         .fullScreenCover(item: $activeMode, onDismiss: store.reload) { kind in
-            Group {
-                switch kind {
-                case .room:
-                    if DeviceSupport.roomScan {
-                        RoomScanView()
-                    } else {
-                        UnsupportedView(feature: "Room Scan", requirement: "an iPhone or iPad with a LiDAR sensor")
-                    }
-                case .object:
-                    ObjectScanEntryView()
-                case .photo:
-                    if DeviceSupport.photoPrint {
-                        PhotoPrintView()
-                    } else {
-                        UnsupportedView(feature: "Photo Print", requirement: "an iPhone or iPad with a LiDAR sensor")
-                    }
-                case .face:
-                    if DeviceSupport.faceScan {
-                        FaceScanView()
-                    } else {
-                        UnsupportedView(feature: "Face Scan", requirement: "an iPhone or iPad with Face ID (TrueDepth camera)")
-                    }
-                }
+            ScanModeView(kind: kind)
+                .printJobBanner()
+        }
+    }
+}
+
+private struct ScanModeView: View {
+    let kind: ScanKind
+
+    var body: some View {
+        switch kind {
+        case .room:
+            if DeviceSupport.roomScan {
+                RoomScanView()
+            } else {
+                UnsupportedView(feature: "Room Scan", requirement: "an iPhone or iPad with a LiDAR sensor")
             }
-            .printJobBanner()
+        case .object:
+            ObjectScanEntryView()
+        case .photo:
+            if DeviceSupport.photoPrint {
+                PhotoPrintView()
+            } else {
+                UnsupportedView(feature: "Photo Print", requirement: "an iPhone or iPad with a LiDAR sensor")
+            }
+        case .face:
+            if DeviceSupport.faceScan {
+                FaceScanView()
+            } else {
+                UnsupportedView(feature: "Face Scan", requirement: "an iPhone or iPad with Face ID (TrueDepth camera)")
+            }
         }
     }
 }

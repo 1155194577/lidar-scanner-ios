@@ -110,6 +110,53 @@ def parse_multipart(content_type, body):
     return parts
 
 
+def check_face(parts):
+    """Validates the `mode=face` fields and returns a summary of them."""
+    def text(name):
+        return parts[name][1].decode() if name in parts else None
+
+    def matrix(name, size=16):
+        value = json.loads(text(name)) if name in parts else None
+        if value is not None and (not isinstance(value, list) or len(value) != size):
+            raise ValueError("%s must be %d numbers" % (name, size))
+        return value
+
+    def intrinsics(name):
+        value = json.loads(text(name)) if name in parts else None
+        if value is not None and not (isinstance(value, dict) and all(k in value for k in ("fx", "fy", "cx", "cy", "width", "height"))):
+            raise ValueError("%s must have fx, fy, cx, cy, width and height" % name)
+        return value
+
+    try:
+        summary = {
+            "mode": "face",
+            "image_orientation": int(text("image_orientation") or 1),
+            "intrinsics": intrinsics("intrinsics"),
+            "camera_transform": matrix("camera_transform"),
+            "face_transform": matrix("face_transform"),
+            "depth_intrinsics": intrinsics("depth_intrinsics"),
+            "depth_extrinsics": matrix("depth_extrinsics"),
+            "height_mm": float(text("height_mm") or 100),
+        }
+        if "depth" in parts:
+            width, height = int(text("depth_width")), int(text("depth_height"))
+            if width <= 0 or height <= 0 or len(parts["depth"][1]) != width * height * 4:
+                raise ValueError("depth must be depth_width x depth_height float32 values")
+            summary.update(depth_width=width, depth_height=height)
+        if "face_vertices" in parts:
+            count = int(text("face_vertex_count"))
+            if count <= 0 or len(parts["face_vertices"][1]) != count * 12:
+                raise ValueError("face_vertices must be face_vertex_count x 3 float32 values")
+            summary["face_vertex_count"] = count
+    except (TypeError, ValueError) as error:
+        raise ValueError(str(error) if str(error).startswith(("depth", "face", "camera", "intrinsics")) else "face fields must be numbers or JSON")
+    if summary["image_orientation"] not in (1, 3, 6, 8):
+        raise ValueError("image_orientation must be 1, 3, 6 or 8")
+    if summary["height_mm"] <= 0:
+        raise ValueError("height_mm must be a positive number")
+    return summary
+
+
 def check_pose(parts):
     """Validates `image_orientation` and the optional `camera_transform`."""
     try:
@@ -275,7 +322,6 @@ class Handler(BaseHTTPRequestHandler):
                     return self.error(422, str(error))
                 source += ", depth %(depth_width)dx%(depth_height)d" % summary
             stem = "photo"
-            summary = {}
             if parts.get("mode", (None, b"object"))[1].decode() == "face":
                 try:
                     summary = check_face(parts)
