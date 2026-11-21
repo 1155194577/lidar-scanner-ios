@@ -246,7 +246,17 @@ struct PrintService {
         var request = URLRequest(url: uploadsEndpoint.appendingPathComponent(jobID))
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         if let token { request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization") }
-        struct Confirmation: Decodable { let files: [String: UploadReference] }
+        struct Confirmation: Decodable {
+            let files: [String: UploadReference]
+
+            private enum CodingKeys: String, CodingKey { case files, uploads }
+
+            init(from decoder: Decoder) throws {
+                let container = try decoder.container(keyedBy: CodingKeys.self)
+                files = try container.decodeIfPresent([String: UploadReference].self, forKey: .files)
+                    ?? container.decode([String: UploadReference].self, forKey: .uploads)
+            }
+        }
         let (data, response) = try await session.data(for: request)
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
         guard (200..<300).contains(status) else {

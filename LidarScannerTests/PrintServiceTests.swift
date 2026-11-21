@@ -854,6 +854,19 @@ final class PrintServiceTests: XCTestCase {
         XCTAssertEqual(calls, ["POST /print/uploads", "GET /print/uploads/job-1", "POST /print", "GET /result.stl"])
     }
 
+    func testConfirmedUploadsAcceptsLegacyUploadsEnvelope() async throws {
+        let client = try service(token: "abc")
+        StubProtocol.handler = { request in
+            XCTAssertEqual(request.httpMethod, "GET")
+            XCTAssertEqual(request.url?.path, "/print/uploads/job-1")
+            return (200, "application/json", Data(#"{"uploads":{"photo":{"file_id":"job-1/photo","get_url":"https://s3.test/preview"}}}"#.utf8))
+        }
+
+        let references = try await client.confirmedUploads(jobID: "job-1")
+        XCTAssertEqual(references["photo"]?.file_id, "job-1/photo")
+        XCTAssertEqual(references["photo"]?.get_url.absoluteString, "https://s3.test/preview")
+    }
+
     func testPreflightStorageDenialSkipsConfirmationAndUsesMultipart() async throws {
         let uploader = FakeUploader()
         uploader.statuses = ["photo": [403, 403, 403]]
