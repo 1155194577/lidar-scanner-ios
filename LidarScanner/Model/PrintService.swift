@@ -155,6 +155,14 @@ struct PrintService {
         return String(decoding: data.prefix(300), as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
+    static func failureMessage(_ error: Error) -> String {
+        let message = error.localizedDescription
+        if (error as? URLError)?.code == .unknown || message.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == "unknown error" {
+            return "Couldn't contact the print server. Check your connection and retry."
+        }
+        return message
+    }
+
     static var outputDirectory: URL {
         FileManager.default.temporaryDirectory.appendingPathComponent("Prints", isDirectory: true)
     }

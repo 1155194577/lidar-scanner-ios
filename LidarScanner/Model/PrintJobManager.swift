@@ -68,11 +68,13 @@ final class PrintJobManager: ObservableObject {
     private let defaults: UserDefaults
     private let notifications: Bool
     private let makeService: ((PrintJob) throws -> PrintService)?
+    private let authorize: (() async -> Void)?
 
-    init(defaults: UserDefaults = .standard, notifications: Bool = true, makeService: ((PrintJob) throws -> PrintService)? = nil) {
+    init(defaults: UserDefaults = .standard, notifications: Bool = true, makeService: ((PrintJob) throws -> PrintService)? = nil, authorize: (() async -> Void)? = nil) {
         self.defaults = defaults
         self.notifications = notifications
         self.makeService = makeService
+        self.authorize = authorize
         if defaults == .standard, LaunchArguments.contains(LaunchArguments.resetScans) { defaults.removeObject(forKey: "printJobs") }
         if let data = defaults.data(forKey: "printJobs"), let saved = try? JSONDecoder().decode([PrintJob].self, from: data) {
             jobs = saved
@@ -89,9 +91,6 @@ final class PrintJobManager: ObservableObject {
         inputs[job.id] = input
         tokens[job.id] = PrintService.configuredToken
         persist()
-        if notifications {
-            UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
-        }
         run(job, submit: true)
     }
 
@@ -128,6 +127,7 @@ final class PrintJobManager: ObservableObject {
     }
 
     func sceneChanged(_ phase: ScenePhase) {
+        guard phase != .inactive else { return }
         active = phase == .active
         if phase == .background {
             backgroundTask = UIApplication.shared.beginBackgroundTask(withName: "Print stream") { [weak self] in
@@ -157,6 +157,11 @@ final class PrintJobManager: ObservableObject {
     private func run(_ job: PrintJob, submit: Bool) {
         guard tasks[job.id] == nil else { return }
         tasks[job.id] = Task {
+            if submit {
+                if let authorize { await authorize() }
+                else if notifications { _ = try? await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) }
+                if Task.isCancelled { return }
+            }
             var lastError: Error = PrintError.server(status: 404, message: "Lost contact with the print server")
             for attempt in 0..<3 {
                 do {
@@ -248,7 +253,7 @@ final class PrintJobManager: ObservableObject {
                 removeTransferFile(id)
             } catch { jobs[index].error = error.localizedDescription }
         case .failure(let error):
-            jobs[index].error = error.localizedDescription
+            jobs[index].error = PrintService.failureMessage(error)
             if case PrintError.jobFailed = error { jobs[index].retryFromStart = true }
             if case PrintError.invalidBaseURL = error { jobs[index].retryFromStart = true }
             if case PrintError.server(let status, _) = error, status != 404 { jobs[index].retryFromStart = true }

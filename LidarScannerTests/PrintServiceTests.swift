@@ -301,6 +301,39 @@ final class PrintServiceTests: XCTestCase {
     }
 
     @MainActor
+    func testFirstPrintWaitsForPermissionAndSurvivesInactivePhase() async throws {
+        let suite = "PrintJobs-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let requested = expectation(description: "permission requested")
+        var release: CheckedContinuation<Void, Never>?
+        var submitted = false
+        StubProtocol.handler = { _ in
+            submitted = true
+            return (200, "model/stl", Data("stl".utf8))
+        }
+        let manager = PrintJobManager(defaults: defaults, notifications: false, makeService: { _ in try self.service() }, authorize: {
+            await withCheckedContinuation { continuation in
+                release = continuation
+                requested.fulfill()
+            }
+        })
+        manager.sceneChanged(.active)
+        manager.start(input: .photo(Data([1]), heightMM: 10), name: "Permission", kind: "photo")
+        await fulfillment(of: [requested], timeout: 2)
+        manager.sceneChanged(.inactive)
+        XCTAssertFalse(submitted)
+        XCTAssertNil(manager.jobs.first?.error)
+        release?.resume()
+        let ready = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in manager.jobs.first?.result != nil }, object: nil)
+        await fulfillment(of: [ready], timeout: 2)
+        XCTAssertTrue(submitted)
+        XCTAssertNil(manager.jobs.first?.error)
+        manager.dismiss(manager.jobs[0])
+        XCTAssertEqual(PrintService.failureMessage(URLError(.unknown)), "Couldn't contact the print server. Check your connection and retry.")
+    }
+
+    @MainActor
     func testDismissDeletesResultAndLateDownloadCopies() throws {
         let suite = "PrintJobs-\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suite)!
