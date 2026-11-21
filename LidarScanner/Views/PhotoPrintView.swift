@@ -81,6 +81,7 @@ struct PhotoPrintView: View {
 struct PrintedModel: Identifiable {
     let url: URL
     var sourceScan: ScanFile? = nil
+    var kind: ScanKind = .photo
     var id: URL { url }
 }
 
@@ -140,7 +141,7 @@ struct PrintResultView: View {
             if let scan = model.sourceScan {
                 try store.savePrintedSTL(model.url, for: scan)
             } else {
-                try store.savePhotoPrint(model.url)
+                try store.savePrint(model.url, kind: model.kind)
             }
             isSaved = true
         } catch {

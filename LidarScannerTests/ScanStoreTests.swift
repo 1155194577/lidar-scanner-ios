@@ -81,13 +81,27 @@ final class ScanStoreTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: model.path))
     }
 
+    func testFacePrintsAreSavedInTheirOwnSection() throws {
+        let store = ScanStore(directory: directory)
+        let source = directory.appendingPathComponent("Face sample.stl")
+        try Data("face STL".utf8).write(to: source)
+        try store.savePrint(source, kind: .face)
+
+        let reloaded = ScanStore(directory: directory)
+        XCTAssertEqual(reloaded.scans(of: .face).map(\.name), ["Face sample"])
+        XCTAssertTrue(reloaded.scans(of: .photo).isEmpty)
+        XCTAssertEqual(reloaded.scans(of: .face).first?.url.deletingLastPathComponent().lastPathComponent, "Face Prints")
+        reloaded.deleteAll()
+        XCTAssertTrue(reloaded.scans.isEmpty)
+    }
+
     func testPhotoPrintsAreStandaloneAndDoNotOverwriteEachOther() throws {
         let store = ScanStore(directory: directory)
         let source = directory.appendingPathComponent("Photo sample.stl")
         let contents = Data("photo STL".utf8)
         try contents.write(to: source)
-        try store.savePhotoPrint(source)
-        try store.savePhotoPrint(source)
+        try store.savePrint(source, kind: .photo)
+        try store.savePrint(source, kind: .photo)
 
         let reloaded = ScanStore(directory: directory)
         let photos = reloaded.scans(of: .photo)

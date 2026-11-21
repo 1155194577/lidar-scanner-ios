@@ -3,11 +3,13 @@
 
 Mirrors the live contract: POST /print takes multipart form data with either
 `mesh` (an .obj, .ply or .usdz file in metres) or `photo` (.jpg/.png) plus an
-optional `height_mm`, and a client UUID `job_id`. NDJSON clients get accepted,
-progress and terminal events; GET /print/{id} replays progress, and
-GET /print/{id}/result long-polls an STL. Legacy clients get `model/stl` and an
+optional `height_mm`, or `mode=face` with a front-camera `photo`, `intrinsics`,
+`camera_transform`, `image_orientation`, optional `depth` (float32 metres) with
+`depth_width`/`depth_height`/`depth_intrinsics`/`depth_extrinsics`, `face_transform`,
+`face_vertices` (float32 xyz) with `face_vertex_count` and `height_mm`. It answers with a small STL cube as `model/stl` and an
 `X-Print-Report` JSON header. Errors are JSON `{"detail": ...}`. With --token,
-requests must carry `Authorization: Bearer <token>` or get a 401.
+requests must carry `Authorization: Bearer <token>` or get a 401. GET /last returns a JSON summary of the
+last accepted print request, for UI tests.
 
     python3 scripts/print_stub.py            # listens on 0.0.0.0:8765
     python3 scripts/print_stub.py --port 9000 --delay 2 --token secret
@@ -97,21 +99,70 @@ def parse_multipart(content_type, body):
     return parts
 
 
+def check_face(parts):
+    """Validates the `mode=face` fields and returns a summary of them."""
+    def text(name):
+        return parts[name][1].decode() if name in parts else None
+
+    def matrix(name, size=16):
+        value = json.loads(text(name)) if name in parts else None
+        if value is not None and (not isinstance(value, list) or len(value) != size):
+            raise ValueError("%s must be %d numbers" % (name, size))
+        return value
+
+    def intrinsics(name):
+        value = json.loads(text(name)) if name in parts else None
+        if value is not None and not (isinstance(value, dict) and all(k in value for k in ("fx", "fy", "cx", "cy", "width", "height"))):
+            raise ValueError("%s must have fx, fy, cx, cy, width and height" % name)
+        return value
+
+    try:
+        summary = {
+            "mode": "face",
+            "image_orientation": int(text("image_orientation") or 1),
+            "intrinsics": intrinsics("intrinsics"),
+            "camera_transform": matrix("camera_transform"),
+            "face_transform": matrix("face_transform"),
+            "depth_intrinsics": intrinsics("depth_intrinsics"),
+            "depth_extrinsics": matrix("depth_extrinsics"),
+            "height_mm": float(text("height_mm") or 100),
+        }
+        if "depth" in parts:
+            width, height = int(text("depth_width")), int(text("depth_height"))
+            if width <= 0 or height <= 0 or len(parts["depth"][1]) != width * height * 4:
+                raise ValueError("depth must be depth_width x depth_height float32 values")
+            summary.update(depth_width=width, depth_height=height)
+        if "face_vertices" in parts:
+            count = int(text("face_vertex_count"))
+            if count <= 0 or len(parts["face_vertices"][1]) != count * 12:
+                raise ValueError("face_vertices must be face_vertex_count x 3 float32 values")
+            summary["face_vertex_count"] = count
+    except (TypeError, ValueError) as error:
+        raise ValueError(str(error) if str(error).startswith(("depth", "face", "camera", "intrinsics")) else "face fields must be numbers or JSON")
+    if summary["image_orientation"] not in (1, 3, 6, 8):
+        raise ValueError("image_orientation must be 1, 3, 6 or 8")
+    if summary["height_mm"] <= 0:
+        raise ValueError("height_mm must be a positive number")
+    return summary
+
+
 class Handler(BaseHTTPRequestHandler):
     delay = 12.0
     token = None
     fail_stage = None
     timeout = 60
-    jobs = {}
-    jobs_lock = threading.Lock()
+    last_request = {}
 
     def do_GET(self):
         if self.path.rstrip("/") == "/health":
-            return self.reply(200, "text/plain", b"ok\n")
-        if not self.authorized():
-            return
-        path = self.path.removeprefix("/fail").strip("/").split("/")
-        if len(path) not in (2, 3) or path[0] != "print":
+            self.reply(200, "text/plain", b"ok\n")
+        elif self.path.rstrip("/") == "/last":
+            self.reply(200, "application/json", json.dumps(Handler.last_request).encode())
+        else:
+            self.reply(404, "text/plain", b"not found\n")
+
+    def do_POST(self):
+        if self.path.rstrip("/") != "/print":
             return self.error(404, "not found")
         with self.jobs_lock:
             job = self.jobs.get(path[1])
@@ -180,7 +231,20 @@ class Handler(BaseHTTPRequestHandler):
                     return self.error(422, "height_mm must be a positive number")
                 source += ", height %g mm" % height
             stem = "photo"
+            summary = {}
+            if parts.get("mode", (None, b"object"))[1].decode() == "face":
+                try:
+                    summary = check_face(parts)
+                except ValueError as error:
+                    return self.error(422, str(error))
+                source = source.replace("photo", "face photo", 1)
+                if "depth_width" in summary:
+                    source += ", depth %(depth_width)dx%(depth_height)d" % summary
+                stem = "face"
 
+        Handler.last_request = {"fields": sorted(parts), "source": source}
+        if "photo" in parts:
+            Handler.last_request.update(summary)
         self.log_message("print request: %s", source)
         report = {"extents_mm": [20.0, 20.0, 20.0], "watertight": True, "volume_cm3": 8.0}
         if "application/x-ndjson" in self.headers.get("Accept", ""):
