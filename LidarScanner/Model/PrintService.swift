@@ -6,6 +6,19 @@ enum PrintInput {
     case photo(Data, heightMM: Double, pose: CameraPose? = nil, depth: DepthCapture? = nil)
 }
 
+/// `/photo-check`'s verdict on a Photo Print shot, from the phone's pitch plus a vision model.
+struct PhotoCheck: Decodable, Equatable {
+    struct Issue: Decodable, Equatable {
+        /// `steep_angle`, `cluttered_background` or `cut_off`.
+        let code: String
+        let message: String
+    }
+
+    let ok: Bool
+    let issues: [Issue]
+    let cameraPitchDeg: Double?
+}
+
 enum PrintError: LocalizedError, Equatable {
     case invalidBaseURL(String)
     case server(status: Int, message: String)
@@ -47,6 +60,7 @@ struct PrintService {
     }
 
     let endpoint: URL
+    let checkEndpoint: URL
     private let token: String?
     private let session: URLSession
 
@@ -57,6 +71,7 @@ struct PrintService {
             throw PrintError.invalidBaseURL(baseURL)
         }
         endpoint = url.appendingPathComponent("print")
+        checkEndpoint = url.appendingPathComponent("photo-check")
         self.token = token
         self.session = session
     }
@@ -78,13 +93,40 @@ struct PrintService {
             }
         }
 
-        var request = URLRequest(url: endpoint, timeoutInterval: 600)
+        return post(form, to: endpoint, accept: "model/stl", timeout: 600)
+    }
+
+    func makePhotoCheckRequest(photo: Data, pose: CameraPose?, boundary: String = "Boundary-\(UUID().uuidString)") throws -> URLRequest {
+        var form = MultipartForm(boundary: boundary)
+        form.addFile(name: "photo", fileName: "photo.jpg", contentType: "image/jpeg", data: photo)
+        if let pose {
+            form.addField(name: "camera_transform", value: String(decoding: try JSONEncoder().encode(pose.cameraTransform), as: UTF8.self))
+        }
+        return post(form, to: checkEndpoint, accept: "application/json", timeout: Self.photoCheckTimeout)
+    }
+
+    /// Asks `/photo-check` whether the shot needs a retake (steep angle, clutter, object cut off).
+    func checkPhoto(_ photo: Data, pose: CameraPose?) async throws -> PhotoCheck {
+        let (data, response) = try await session.data(for: try makePhotoCheckRequest(photo: photo, pose: pose))
+        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+            throw PrintError.server(status: (response as? HTTPURLResponse)?.statusCode ?? 0, message: Self.errorMessage(from: data))
+        }
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        return try decoder.decode(PhotoCheck.self, from: data)
+    }
+
+    static let photoCheckTimeout: TimeInterval = 45
+
+    private func post(_ form: MultipartForm, to url: URL, accept: String, timeout: TimeInterval) -> URLRequest {
+        var request = URLRequest(url: url, timeoutInterval: timeout)
         request.httpMethod = "POST"
-        request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
-        request.setValue("model/stl", forHTTPHeaderField: "Accept")
+        request.setValue("multipart/form-data; boundary=\(form.boundary)", forHTTPHeaderField: "Content-Type")
+        request.setValue(accept, forHTTPHeaderField: "Accept")
         if let token {
             request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         }
+        var form = form
         request.httpBody = form.finalized()
         return request
     }

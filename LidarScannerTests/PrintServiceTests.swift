@@ -95,6 +95,44 @@ final class PrintServiceTests: XCTestCase {
         XCTAssertFalse(text.contains("name=\"depth\""))
     }
 
+    func testPhotoCheckRequestSendsPhotoAndPose() throws {
+        let pose = CameraPose(cameraTransform: [1, 0, 0, 0, 0, 0.6428, -0.766, 0, 0, 0.766, 0.6428, 0, 0, 0.3, 0.25, 1], imageOrientation: .up)
+        let request = try PrintService(baseURL: "http://localhost:8765", token: "t")
+            .makePhotoCheckRequest(photo: Data("jpeg".utf8), pose: pose, boundary: "B")
+        XCTAssertEqual(request.url?.absoluteString, "http://localhost:8765/photo-check")
+        XCTAssertEqual(request.timeoutInterval, PrintService.photoCheckTimeout)
+        XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer t")
+        let body = String(decoding: try XCTUnwrap(request.httpBody), as: UTF8.self)
+        XCTAssertTrue(body.contains("name=\"photo\"; filename=\"photo.jpg\"\r\nContent-Type: image/jpeg\r\n\r\njpeg\r\n"))
+        XCTAssertTrue(body.contains("name=\"camera_transform\"\r\n\r\n[1,0,0,0,0,0.6428,-0.766,0,0,0.766,0.6428,0,0,0.3,0.25,1]\r\n"))
+        XCTAssertFalse(body.contains("name=\"height_mm\""))
+    }
+
+    func testPhotoCheckReadsIssues() async throws {
+        StubProtocol.handler = { request in
+            XCTAssertEqual(request.url?.path, "/photo-check")
+            let json = #"{"ok": false, "issues": [{"code": "steep_angle", "message": "Too steep"}, {"code": "cut_off", "message": "Cut off"}], "camera_pitch_deg": 50.0, "angle_checked": true, "max_pitch_deg": 30.0, "model": "x"}"#
+            return (200, "application/json", Data(json.utf8))
+        }
+
+        let check = try await service().checkPhoto(Data("jpeg".utf8), pose: nil)
+
+        XCTAssertFalse(check.ok)
+        XCTAssertEqual(check.issues.map(\.code), ["steep_angle", "cut_off"])
+        XCTAssertEqual(check.issues.first?.message, "Too steep")
+        XCTAssertEqual(check.cameraPitchDeg, 50)
+    }
+
+    func testPhotoCheckErrorThrows() async throws {
+        StubProtocol.handler = { _ in (404, "application/json", Data(#"{"detail": "Not Found"}"#.utf8)) }
+        do {
+            _ = try await service().checkPhoto(Data("jpeg".utf8), pose: nil)
+            XCTFail("expected an error")
+        } catch let error as PrintError {
+            XCTAssertEqual(error, .server(status: 404, message: "Not Found"))
+        }
+    }
+
     func testSavesReturnedSTL() async throws {
         let mesh = directory.appendingPathComponent("Object 1.usdz")
         try Data("usdz".utf8).write(to: mesh)

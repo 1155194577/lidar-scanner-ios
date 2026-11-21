@@ -6,6 +6,8 @@ enum LaunchArguments {
     static let seedSampleScans = "-UITestSeedSampleScans"
     static let forceUnsupported = "-UITestForceUnsupported"
     static let fakePhotoCapture = "-UITestFakePhotoCapture"
+    /// Pass as `-UITestFakePitch <degrees>`; launch arguments in this form land in UserDefaults.
+    static let fakePitchKey = "UITestFakePitch"
 
     static func contains(_ argument: String) -> Bool {
         ProcessInfo.processInfo.arguments.contains(argument)
