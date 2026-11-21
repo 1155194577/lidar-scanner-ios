@@ -31,8 +31,8 @@ private struct PrintJobBannerModifier: ViewModifier {
                                             Button("Retry") { manager.retry(job) }
                                                 .accessibilityIdentifier("retryPrintButton")
                                         }
-                                    } else if let url = job.result {
-                                        Button { selected = PrintedModel(url: url) } label: {
+                                    } else if job.result != nil {
+                                        Button { selected = manager.printedModel(for: job) } label: {
                                             Label("STL ready — Share", systemImage: "square.and.arrow.up")
                                         }
                                         .accessibilityIdentifier("printResultButton")
@@ -64,9 +64,7 @@ private struct PrintJobBannerModifier: ViewModifier {
                 }
             }
             .sheet(item: $selected) { model in
-                ActivityView(items: [model.url]) { selected = nil }
-                    .presentationDetents([.medium, .large])
-                    .ignoresSafeArea()
+                PrintResultView(model: model)
             }
     }
 }

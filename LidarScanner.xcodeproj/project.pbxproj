@@ -137,6 +137,7 @@
 				B8BFDFCA721B0D943DB447DC /* DeviceSupport.swift */,
 				11D27955B848FD430FD3595F /* FaceCapture.swift */,
 				4ADE67AD7F6A66051B9B8B61 /* KeychainStore.swift */,
+				5BA44A95E9C07A3E97B33581 /* ObjectScanCoaching.swift */,
 				86C1D1E620A18A53EC63D7A0 /* PrintJobManager.swift */,
 				0948124D94F88A05132C8D1C /* PrintService.swift */,
 				5AEE1F5D3FC4825BDA978F4C /* ScanStore.swift */,

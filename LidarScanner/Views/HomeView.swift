@@ -68,24 +68,8 @@ struct HomeView: View {
                 }
             }
         }
-        .printJobBanner(visible: activeMode == nil && !showsPhotoPrint && !showsSettings)
+        .printJobBanner(visible: activeMode == nil && !showsSettings)
         .sheet(isPresented: $showsSettings) { SettingsView().printJobBanner() }
-        .fullScreenCover(isPresented: $showsPhotoPrint) {
-            Group {
-                if DeviceSupport.photoPrint {
-                    PhotoPrintView()
-                } else {
-                    UnsupportedView(feature: "Photo Print", requirement: "an iPhone or iPad with a LiDAR sensor")
-                }
-            case .face:
-                if DeviceSupport.faceScan {
-                    FaceScanView()
-                } else {
-                    UnsupportedView(feature: "Face Scan", requirement: "an iPhone or iPad with Face ID (TrueDepth camera)")
-                }
-            }
-            .printJobBanner()
-        }
         .fullScreenCover(item: $activeMode, onDismiss: store.reload) { kind in
             Group {
                 switch kind {
@@ -96,10 +80,12 @@ struct HomeView: View {
                         UnsupportedView(feature: "Room Scan", requirement: "an iPhone or iPad with a LiDAR sensor")
                     }
                 case .object:
-                    if DeviceSupport.objectScan {
-                        ObjectScanView()
+                    ObjectScanEntryView()
+                case .photo:
+                    if DeviceSupport.photoPrint {
+                        PhotoPrintView()
                     } else {
-                        UnsupportedView(feature: "Object Scan", requirement: "an iPhone or iPad with a LiDAR sensor and an A14 chip or newer")
+                        UnsupportedView(feature: "Photo Print", requirement: "an iPhone or iPad with a LiDAR sensor")
                     }
                 }
             }
