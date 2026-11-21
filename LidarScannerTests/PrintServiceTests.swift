@@ -435,6 +435,33 @@ final class PrintServiceTests: XCTestCase {
         manager.dismiss(manager.jobs[0])
     }
 
+    @MainActor
+    func testTerminalBackgroundHTTPFailuresNotifyInsteadOfReconnecting() throws {
+        for status in [404, 422, 500] {
+            let suite = "PrintJobs-\(UUID().uuidString)"
+            let defaults = UserDefaults(suiteName: suite)!
+            defer { defaults.removePersistentDomain(forName: suite) }
+            let job = PrintJob(id: UUID().uuidString, name: "HTTP failure", kind: "photo", baseURL: PrintService.configuredBaseURL)
+            defaults.set(try JSONEncoder().encode([job]), forKey: "printJobs")
+            var notifications = [String]()
+            let manager = PrintJobManager(defaults: defaults, notifications: false, notify: { id, title, body in
+                XCTAssertEqual(id, job.id)
+                XCTAssertEqual(title, "Printing failed")
+                notifications.append(body)
+            })
+            manager.sceneChanged(.background)
+            let file = directory.appendingPathComponent("http-error")
+            try Data(#"{"detail":"repair failed"}"#.utf8).write(to: file)
+            let response = HTTPURLResponse(url: URL(string: "http://print.test/result")!, statusCode: status, httpVersion: nil, headerFields: ["Content-Type": "application/json"])!
+            let result = Result { try PrintBackgroundDownload.saveResponse(response, file: file, id: job.id) }
+            manager.complete(id: job.id, result: result, source: .download)
+            XCTAssertNotNil(manager.jobs.first?.error)
+            XCTAssertEqual(notifications.count, 1)
+            XCTAssertTrue(notifications[0].contains(status == 404 ? "Lost contact" : "repair failed"))
+            manager.dismiss(manager.jobs[0])
+        }
+    }
+
     func testPersistedResultUsesRelativePathAndMigratesOldContainer() throws {
         let legacy = #"{"id":"job","name":"Cube","kind":"photo","baseURL":"http://print.test","result":"file:///old-container/Library/Application%20Support/PrintJobs/job/Cube.stl"}"#
         let job = try JSONDecoder().decode(PrintJob.self, from: Data(legacy.utf8))

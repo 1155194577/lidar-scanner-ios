@@ -69,12 +69,14 @@ final class PrintJobManager: ObservableObject {
     private let notifications: Bool
     private let makeService: ((PrintJob) throws -> PrintService)?
     private let authorize: (() async -> Void)?
+    private let notify: ((String, String, String) -> Void)?
 
-    init(defaults: UserDefaults = .standard, notifications: Bool = true, makeService: ((PrintJob) throws -> PrintService)? = nil, authorize: (() async -> Void)? = nil) {
+    init(defaults: UserDefaults = .standard, notifications: Bool = true, makeService: ((PrintJob) throws -> PrintService)? = nil, authorize: (() async -> Void)? = nil, notify: ((String, String, String) -> Void)? = nil) {
         self.defaults = defaults
         self.notifications = notifications
         self.makeService = makeService
         self.authorize = authorize
+        self.notify = notify
         if defaults == .standard, LaunchArguments.contains(LaunchArguments.resetScans) { defaults.removeObject(forKey: "printJobs") }
         if let data = defaults.data(forKey: "printJobs"), let saved = try? JSONDecoder().decode([PrintJob].self, from: data) {
             jobs = saved
@@ -249,7 +251,7 @@ final class PrintJobManager: ObservableObject {
             if case PrintError.server(422, _) = error { terminal = true }
             if case PrintError.serverChanged = error { terminal = true }
             if !terminal, tasks[id] != nil || downloads.contains(id) { return }
-            if !terminal, source == .download {
+            if !terminal, source == .download, (error as NSError).domain == NSURLErrorDomain {
                 update(id, progress: PrintProgress(stage: "reconnecting", message: "Waiting to reconnect to print server", progress: nil))
                 if active, tasks[id] == nil { run(jobs[index], submit: false) }
                 return
@@ -278,12 +280,13 @@ final class PrintJobManager: ObservableObject {
         PrintBackgroundDownload.shared.cancel(id: id)
         downloads.remove(id)
         if jobs.allSatisfy(\.isFinished) { endBackgroundTask() }
-        if !active, notifications {
+        if !active, notifications || notify != nil {
             let content = UNMutableNotificationContent()
             content.title = jobs[index].error == nil ? "STL ready" : "Printing failed"
             content.body = jobs[index].error ?? "\(jobs[index].name) is ready to share."
             content.sound = .default
-            UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: id, content: content, trigger: nil))
+            if let notify { notify(id, content.title, content.body) }
+            else { UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: id, content: content, trigger: nil)) }
         }
     }
 
@@ -340,7 +343,7 @@ final class PrintBackgroundDownload: NSObject, URLSessionDownloadDelegate, @unch
 
     static func saveResponse(_ response: URLResponse?, file: URL, id: String) throws -> URL {
         guard let http = response as? HTTPURLResponse else { throw PrintError.unexpectedResponse("no HTTP response") }
-        if http.statusCode == 404 { throw PrintError.lostContact }
+        if http.statusCode == 404 { throw PrintError.server(status: 404, message: PrintError.lostContact.localizedDescription) }
         guard (200..<300).contains(http.statusCode) else {
             throw PrintError.server(status: http.statusCode, message: PrintService.errorMessage(from: try Data(contentsOf: file)))
         }
