@@ -5,7 +5,7 @@ struct ObjectScanEntryView: View {
 
     var body: some View {
         if started {
-            if DeviceSupport.objectScan {
+            if DeviceSupport.objectScan || LaunchArguments.contains(LaunchArguments.fakeObjectCapture) {
                 ObjectScanView()
             } else {
                 UnsupportedView(feature: "Object Scan", requirement: "an iPhone or iPad with a LiDAR sensor and an A14 chip or newer")
