@@ -25,7 +25,8 @@ size, else 403 (expired or bad signature, S3-style XML) or 400. POST /print with
 `uploaded=<names>` (form fields, no file parts) uses the stored files, or answers 409
 {"detail": "upload missing: depth", "missing": ["depth"]}. Test modes go in front of the base path,
 joined by "-": /fail (job errors at repair), /expire (each job's first URL per file is already expired),
-/drop (the first submit of each job reports its first file missing), /legacy (no /print/uploads: 405).
+/drop (the first submit of each job reports its first file missing), /legacy (no /print/uploads: 405),
+/deny (every PUT is refused 403 AccessDenied, like a bucket without an IAM policy).
 
 POST /photo-check takes `photo` plus optional `camera_transform` and answers
 `{ok, issues: [{code, message}], camera_pitch_deg, angle_checked, max_pitch_deg}`; like the
@@ -52,7 +53,7 @@ UPLOAD_NAMES = ("mesh", "photo", "depth", "depth_confidence", "face_vertices")
 UPLOAD_FILENAMES = {"photo": "photo.jpg", "depth": "depth.f32", "depth_confidence": "confidence.u8",
                     "face_vertices": "face_vertices.f32"}
 MESH_TYPES = {"model/vnd.usdz+zip": ".usdz", "model/obj": ".obj", "application/x-ply": ".ply"}
-MODES = ("fail", "expire", "drop", "legacy")
+MODES = ("fail", "expire", "drop", "legacy", "deny")
 UPLOAD_EXPIRES = 900
 
 
@@ -71,6 +72,7 @@ class Uploads:
         self.files = {}
         self.stats = {"url_requests": 0, "puts": 0, "rejected_puts": 0, "conflicts": 0}
         self.dropped = False
+        self.denied = False
 
 
 class Job:
@@ -308,6 +310,8 @@ class Handler(BaseHTTPRequestHandler):
         refusal = None
         if slot is None or query.get("sig") != slot["sig"] or self.headers.get("Authorization"):
             refusal = ("SignatureDoesNotMatch", "The request signature we calculated does not match the signature you provided.")
+        elif uploads.denied:
+            refusal = ("AccessDenied", "User is not authorized to perform: s3:PutObject because no identity-based policy allows the s3:PutObject action")
         elif time.time() > slot["expires"]:
             refusal = ("AccessDenied", "Request has expired")
         else:
@@ -350,6 +354,7 @@ class Handler(BaseHTTPRequestHandler):
         with self.jobs_lock:
             uploads = self.uploads.setdefault(job_id, Uploads())
             uploads.stats["url_requests"] += 1
+            uploads.denied = "deny" in modes
             for name, spec in files.items():
                 if name not in UPLOAD_NAMES:
                     return self.error(422, "unknown upload " + name)
@@ -411,6 +416,11 @@ class Handler(BaseHTTPRequestHandler):
             missing, upload_summary = self.attach_uploads(parts, modes)
             if missing:
                 return self.reply(409, "application/json", json.dumps({"detail": "upload missing: " + ", ".join(missing), "missing": missing}).encode())
+        elif path == "/print":
+            with self.jobs_lock:
+                earlier = self.uploads.get(parts.get("job_id", (None, b""))[1].decode())
+                if earlier:
+                    upload_summary = {"upload_stats": dict(earlier.stats)}
 
         if path == "/photo-check":
             if not parts.get("photo", (None, b""))[1]:

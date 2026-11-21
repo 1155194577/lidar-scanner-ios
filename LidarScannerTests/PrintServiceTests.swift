@@ -924,6 +924,44 @@ final class PrintServiceTests: XCTestCase {
         XCTAssertTrue(uploader.puts.isEmpty)
     }
 
+    func testStorageDenyingEveryPutFallsBackToTheMultipartPost() async throws {
+        let uploader = FakeUploader()
+        uploader.statuses = ["photo": [403, 403, 403]]
+        var calls: [String] = []
+        StubProtocol.handler = { request in
+            calls.append(request.url!.path)
+            if request.url!.path == "/print/uploads" { return (200, "application/json", Self.uploadPlan(for: ["photo"])) }
+            let body = String(decoding: Self.body(of: request), as: UTF8.self)
+            XCTAssertTrue(body.contains("name=\"photo\"; filename=\"photo.jpg\""))
+            XCTAssertFalse(body.contains("name=\"uploaded\""))
+            return (200, "model/stl", Data("stl".utf8))
+        }
+        let state = PrintUploadState()
+        let url = try await service(signedUploads: true, uploader: uploader)
+            .requestSTL(for: .photo(Data("jpeg".utf8), heightMM: 10), name: "denied-\(UUID().uuidString)",
+                        in: FileManager.default.temporaryDirectory, jobID: "job-1", uploads: state)
+        try? FileManager.default.removeItem(at: url)
+        XCTAssertEqual(uploader.puts.count, 3)
+        XCTAssertEqual(calls, ["/print/uploads", "/print/uploads", "/print/uploads", "/print"])
+        XCTAssertTrue(state.legacy)
+    }
+
+    func testFailingUploadPlanFallsBackToTheMultipartPost() async throws {
+        let uploader = FakeUploader()
+        var calls: [String] = []
+        StubProtocol.handler = { request in
+            calls.append(request.url!.path)
+            if request.url!.path == "/print/uploads" { return (500, "application/json", Data(#"{"detail":"boom"}"#.utf8)) }
+            return (200, "model/stl", Data("stl".utf8))
+        }
+        let url = try await service(signedUploads: true, uploader: uploader)
+            .requestSTL(for: .photo(Data("jpeg".utf8), heightMM: 10), name: "plan-\(UUID().uuidString)",
+                        in: FileManager.default.temporaryDirectory, jobID: "job-1")
+        try? FileManager.default.removeItem(at: url)
+        XCTAssertEqual(calls, ["/print/uploads", "/print"])
+        XCTAssertTrue(uploader.puts.isEmpty)
+    }
+
     func testFailedUploadsRequestIsAnError() async throws {
         StubProtocol.handler = { _ in (401, "application/json", Data(#"{"detail":"bad token"}"#.utf8)) }
         do {
