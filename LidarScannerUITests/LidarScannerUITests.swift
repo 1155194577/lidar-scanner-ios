@@ -198,7 +198,7 @@ final class LidarScannerUITests: XCTestCase {
 
     func testPhotoPrintSendsPhotoAndHeightAndOpensSTL() throws {
         try requirePrintStub()
-        let app = launch(["-UITestFakePhotoCapture", "-printBaseURL", Self.stubURL, "-printAPIToken", Self.stubToken])
+        let app = launch(["-UITestFakePhotoCapture", "-UITestFakePitch", "5", "-printBaseURL", Self.stubURL, "-printAPIToken", Self.stubToken])
         app.buttons["photoPrintButton"].tap()
 
         XCTAssertEqual(app.staticTexts["photoHeight"].waitForExistence(timeout: 5) ? app.staticTexts["photoHeight"].label : nil, "Height: 120 mm")
@@ -219,9 +219,55 @@ final class LidarScannerUITests: XCTestCase {
         XCTAssertEqual((received["object_points"] as? [[Double]])?.count, 2)
     }
 
+    func testPhotoCheckFlagsSteepShotAndCanPrintAnyway() throws {
+        try requirePrintStub()
+        let app = launch(["-UITestFakePhotoCapture", "-UITestFakePitch", "50", "-printBaseURL", Self.stubURL, "-printAPIToken", Self.stubToken])
+        app.buttons["photoPrintButton"].tap()
+        app.buttons["takePhotoAndPrintButton"].tap()
+
+        let alert = app.alerts["Retake the photo?"]
+        XCTAssertTrue(alert.waitForExistence(timeout: 15), "Steep shot was not flagged")
+        XCTAssertTrue(alert.staticTexts.containing(NSPredicate(format: "label CONTAINS '50° down'")).firstMatch.exists)
+        saveScreenshot(app, name: "photo-check-steep-flagged")
+
+        alert.buttons["Retake"].tap()
+        XCTAssertFalse(alert.exists)
+        XCTAssertTrue(app.buttons["takePhotoAndPrintButton"].isEnabled)
+
+        app.buttons["takePhotoAndPrintButton"].tap()
+        XCTAssertTrue(alert.waitForExistence(timeout: 15))
+        alert.buttons["Print Anyway"].tap()
+        tapSharePrintResult(in: app, timeout: 15)
+        XCTAssertTrue(app.otherElements["ActivityListView"].waitForExistence(timeout: 15), "Print anyway did not print")
+    }
+
+    func testPhotoCheckPassesLevelShot() throws {
+        try requirePrintStub()
+        let app = launch(["-UITestFakePhotoCapture", "-UITestFakePitch", "5", "-printBaseURL", Self.stubURL, "-printAPIToken", Self.stubToken])
+        app.buttons["photoPrintButton"].tap()
+        app.buttons["takePhotoAndPrintButton"].tap()
+
+        let share = app.buttons["Share STL"]
+        XCTAssertTrue(share.waitForExistence(timeout: 15), "Level shot did not go straight to print")
+        XCTAssertFalse(app.alerts["Retake the photo?"].exists)
+        saveScreenshot(app, name: "photo-check-level-passed")
+    }
+
+    /// Attaches a screenshot; with `TEST_RUNNER_SHOT_DIR` set it is also written there as `<name>.png`.
+    private func saveScreenshot(_ app: XCUIApplication, name: String) {
+        let screenshot = app.screenshot()
+        let attachment = XCTAttachment(screenshot: screenshot)
+        attachment.name = name
+        attachment.lifetime = .keepAlways
+        add(attachment)
+        if let dir = ProcessInfo.processInfo.environment["SHOT_DIR"] {
+            try? screenshot.pngRepresentation.write(to: URL(fileURLWithPath: dir).appendingPathComponent("\(name).png"))
+        }
+    }
+
     func testPhotoPrintCanBeSavedAsAStandaloneSTL() throws {
         try requirePrintStub()
-        let app = launch(["-UITestFakePhotoCapture", "-printBaseURL", Self.stubURL, "-printAPIToken", Self.stubToken])
+        let app = launch(["-UITestFakePhotoCapture", "-UITestFakePitch", "5", "-printBaseURL", Self.stubURL, "-printAPIToken", Self.stubToken])
         app.buttons["photoPrintButton"].tap()
         app.buttons["takePhotoAndPrintButton"].tap()
 
@@ -262,7 +308,7 @@ final class LidarScannerUITests: XCTestCase {
         guard let url = environment["PRINT_LIVE_URL"], let token = environment["PRINT_LIVE_TOKEN"], !url.isEmpty, !token.isEmpty else {
             throw XCTSkip("set TEST_RUNNER_PRINT_LIVE_URL and TEST_RUNNER_PRINT_LIVE_TOKEN to test the live endpoint")
         }
-        let app = launch(["-UITestSeedSampleScans", "-UITestFakePhotoCapture", "-printBaseURL", url, "-printAPIToken", token])
+        let app = launch(["-UITestSeedSampleScans", "-UITestFakePhotoCapture", "-UITestFakePitch", "5", "-printBaseURL", url, "-printAPIToken", token])
 
         app.buttons["myScansLink"].tap()
         let printButton = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'print-Object '")).firstMatch

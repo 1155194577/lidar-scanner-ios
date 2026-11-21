@@ -30,7 +30,7 @@ Apps signed with a free Personal Team expire after 7 days; reconnect the phone a
 ## Using it
 
 - **Room Scan:** tap *Room Scan*, walk slowly around the room pointing the phone at walls, floor and furniture, tap **Done**, then **Save Scan**.
-- **Photo Print:** point the phone at an object, tap where it sits on the surface, then tap its top. The app measures the height with LiDAR; tap **Take Photo & Print** to send one photo, that frame's LiDAR depth map and camera intrinsics, and the height to the print server. The server builds the full shape from the photo and fits it to the LiDAR depth of the visible side for true size and pose.
+- **Photo Print:** point the phone at an object, tap where it sits on the surface, then tap its top. The app measures the height with LiDAR; tap **Take Photo & Print** to send one photo, that frame's LiDAR depth map and camera intrinsics, and the height to the print server. The server builds the full shape from the photo and fits it to the LiDAR depth of the visible side for true size and pose. Before printing, the app asks the server to check the shot; if the phone points more than 30° down, the background is cluttered or the object is cut off, it shows why with **Retake** or **Print Anyway**. If the check fails or takes over 45 s, it prints straight away.
 - **Object Scan:** put the object on a plain surface with room to walk around it. Tap **Continue**, fit the box around the object, tap **Start Capture** and circle it slowly. When the pass completes, do **Another Pass** (e.g. with the object flipped) or **Finish**. The model is then built on the phone, which takes a few minutes.
 
 ## Printing a scan
@@ -50,6 +50,9 @@ POST {server}/print   multipart/form-data, Authorization: Bearer <token>
     intrinsics={"fx","fy","cx","cy","width","height"} (photo pixels)
     object_points=[[u,v] base, [u,v] top] (measured points projected into the photo, pixels)
 → 200 model/stl  (X-Print-Report header); errors are JSON {"detail"}
+
+POST {server}/photo-check   before a Photo Print: photo=<upright jpeg> + camera_transform
+→ 200 {"ok", "issues": [{"code": steep_angle|cluttered_background|cut_off, "message"}], "camera_pitch_deg", ...}
 ```
 
 A cold start of the live server can take about 4 minutes, so the first print can be slow; the app waits up to 10 minutes per request.

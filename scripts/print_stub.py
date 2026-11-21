@@ -11,6 +11,10 @@ optional `height_mm` and, for photo + depth fusion, `depth` (float32 metres),
 requests must carry `Authorization: Bearer <token>` or get a 401. GET /last returns a JSON summary
 of the last accepted print request, for UI tests.
 
+POST /photo-check takes `photo` plus optional `camera_transform` and answers
+`{ok, issues: [{code, message}], camera_pitch_deg, angle_checked, max_pitch_deg}`; like the
+live check it flags `steep_angle` when the camera looks more than 30 degrees below level.
+
     python3 scripts/print_stub.py            # listens on 0.0.0.0:8765
     python3 scripts/print_stub.py --port 9000 --delay 2 --token secret
 """
@@ -18,6 +22,7 @@ import argparse
 import email.parser
 import email.policy
 import json
+import math
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -101,6 +106,21 @@ def check_depth(parts):
     }
 
 
+MAX_PITCH_DEG = 30.0
+
+
+def photo_check(parts):
+    """The live check's angle rule: pitch below level from the camera's forward (-Z) axis."""
+    if "camera_transform" not in parts:
+        return {"ok": True, "issues": [], "camera_pitch_deg": None, "angle_checked": False, "max_pitch_deg": MAX_PITCH_DEG}
+    transform = check_pose(dict(parts, image_orientation=(None, b"1")))["camera_transform"]
+    pitch = round(math.degrees(math.asin(max(-1.0, min(1.0, transform[9])))), 1)
+    issues = []
+    if pitch > MAX_PITCH_DEG:
+        issues.append({"code": "steep_angle", "message": "The phone is pointing %g° down. Hold it closer to level with the object (%g° at most)." % (pitch, MAX_PITCH_DEG)})
+    return {"ok": not issues, "issues": issues, "camera_pitch_deg": pitch, "angle_checked": True, "max_pitch_deg": MAX_PITCH_DEG}
+
+
 class Handler(BaseHTTPRequestHandler):
     delay = 0.0
     token = None
@@ -116,7 +136,8 @@ class Handler(BaseHTTPRequestHandler):
             self.reply(404, "text/plain", b"not found\n")
 
     def do_POST(self):
-        if self.path.rstrip("/") != "/print":
+        path = self.path.rstrip("/")
+        if path not in ("/print", "/photo-check"):
             return self.error(404, "not found")
         if self.token and self.headers.get("Authorization") != "Bearer " + self.token:
             self.close_connection = True
@@ -133,6 +154,16 @@ class Handler(BaseHTTPRequestHandler):
             return self.error(413, "upload larger than %d MB" % (MAX_UPLOAD_BYTES // (1024 * 1024)))
         body = self.rfile.read(length)
         parts = parse_multipart(content_type, body)
+
+        if path == "/photo-check":
+            if not parts.get("photo", (None, b""))[1]:
+                return self.error(400, "photo is required")
+            try:
+                result = photo_check(parts)
+            except ValueError as error:
+                return self.error(422, str(error))
+            self.log_message("photo check: %s", json.dumps(result))
+            return self.reply(200, "application/json", json.dumps(result).encode())
 
         if ("mesh" in parts) == ("photo" in parts):
             return self.error(400, "send exactly one of mesh or photo")
