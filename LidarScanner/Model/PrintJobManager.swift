@@ -152,9 +152,8 @@ final class PrintJobManager: ObservableObject {
 
     private func runOnDevice(_ job: PrintJob) {
         guard tasks[job.id] == nil, let input = onDeviceInputs[job.id] else { return }
+        // Backgrounding is covered by the scene-phase background task, which `complete` ends.
         tasks[job.id] = Task {
-            let background = UIApplication.shared.beginBackgroundTask(withName: "On-device print")
-            defer { UIApplication.shared.endBackgroundTask(background) }
             do {
                 let url = try await OnDeviceTripoSR.makeSTL(photo: input.photo, heightMM: input.heightMM) { progress in
                     Task { @MainActor in self.update(job.id, progress: progress) }
