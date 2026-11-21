@@ -98,6 +98,7 @@ final class PrintJobManager: ObservableObject {
     }
 
     private func service(_ job: PrintJob) throws -> PrintService {
+        guard job.baseURL == PrintService.configuredBaseURL else { throw PrintError.serverChanged }
         if let makeService { return try makeService(job) }
         return try PrintService(baseURL: job.baseURL, token: tokens[job.id] ?? PrintService.configuredToken)
     }
@@ -131,6 +132,7 @@ final class PrintJobManager: ObservableObject {
                 } catch {
                     if Task.isCancelled { return }
                     lastError = error
+                    if case PrintError.serverChanged = error { break }
                     if case PrintError.jobFailed = error { break }
                     if case PrintError.server(let status, _) = error, status != 404 && status != 200 { break }
                     if case PrintError.server(200, let detail) = error, !detail.contains("Lost contact") { break }

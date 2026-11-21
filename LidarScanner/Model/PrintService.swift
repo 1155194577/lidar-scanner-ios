@@ -20,9 +20,11 @@ enum PrintError: LocalizedError, Equatable {
     case unexpectedResponse(String)
     case jobFailed(String)
     case lostContact
+    case serverChanged
 
     var errorDescription: String? {
         switch self {
+        case .serverChanged: return "Print server changed in Settings; print again"
         case .jobFailed(let detail): return detail
         case .lostContact: return "Lost contact with the print server. Please retry."
         case .invalidBaseURL(let value):

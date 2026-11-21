@@ -194,7 +194,7 @@ final class PrintServiceTests: XCTestCase {
         let suite = "PrintJobs-\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suite)!
         defer { defaults.removePersistentDomain(forName: suite) }
-        let job = PrintJob(id: UUID().uuidString, name: "Restored", kind: "photo", baseURL: "http://print.test")
+        let job = PrintJob(id: UUID().uuidString, name: "Restored", kind: "photo", baseURL: PrintService.configuredBaseURL)
         defaults.set(try JSONEncoder().encode([job]), forKey: "printJobs")
         let complete = expectation(description: "reattached")
         var count = 0
@@ -221,6 +221,23 @@ final class PrintServiceTests: XCTestCase {
         XCTAssertEqual(PrintJobManager(defaults: defaults, notifications: false).jobs.first?.result, result)
         manager.dismiss(manager.jobs[0])
         XCTAssertTrue(manager.jobs.isEmpty)
+    }
+
+    @MainActor
+    func testRestoredJobRejectsChangedServerBeforeCreatingService() async throws {
+        let suite = "PrintJobs-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let job = PrintJob(id: UUID().uuidString, name: "Old server", kind: "photo", baseURL: "https://old-print.invalid")
+        defaults.set(try JSONEncoder().encode([job]), forKey: "printJobs")
+        let manager = PrintJobManager(defaults: defaults, notifications: false, makeService: { _ in
+            XCTFail("Must not create an authenticated service for the old server")
+            return try self.service()
+        })
+        manager.sceneChanged(.active)
+        let failed = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in manager.jobs.first?.error != nil }, object: nil)
+        await fulfillment(of: [failed], timeout: 2)
+        XCTAssertEqual(manager.jobs.first?.error, "Print server changed in Settings; print again")
     }
 
     func testBackgroundDownloadResponseHandling() throws {
