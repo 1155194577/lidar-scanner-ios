@@ -38,8 +38,42 @@ final class LidarScannerUITests: XCTestCase {
     func testObjectScanExplainsMissingLiDAR() {
         let app = launch(["-UITestForceUnsupported"])
         app.buttons["objectScanButton"].tap()
+        XCTAssertTrue(app.buttons["guideSkipButton"].waitForExistence(timeout: 5))
+        app.buttons["guideSkipButton"].tap()
         XCTAssertTrue(app.staticTexts["Object Scan Unavailable"].waitForExistence(timeout: 5))
         app.buttons["closeButton"].tap()
+        XCTAssertTrue(app.buttons["objectScanButton"].waitForExistence(timeout: 5))
+    }
+
+    func testObjectScanGuideStepsAndStart() throws {
+        let app = launch(["-UITestForceUnsupported"])
+        app.buttons["objectScanButton"].tap()
+        let label = app.staticTexts["guideStepLabel"]
+        XCTAssertTrue(label.waitForExistence(timeout: 5))
+        for step in 1...5 {
+            XCTAssertEqual(label.label, "Step \(step) of 5")
+            let shot = XCUIScreen.main.screenshot()
+            let attachment = XCTAttachment(screenshot: shot)
+            attachment.name = "guide-\(step)"
+            attachment.lifetime = .keepAlways
+            add(attachment)
+            if let directory = ProcessInfo.processInfo.environment["GUIDE_SCREENSHOT_DIR"] {
+                try shot.pngRepresentation.write(to: URL(fileURLWithPath: directory).appendingPathComponent("guide-\(step).png"))
+            }
+            if step < 5 { app.buttons["guideNextButton"].tap() }
+        }
+        app.buttons["guideBackButton"].tap()
+        XCTAssertEqual(label.label, "Step 4 of 5")
+        app.buttons["guideNextButton"].tap()
+        app.buttons["guideStartButton"].tap()
+        XCTAssertTrue(app.staticTexts["Object Scan Unavailable"].waitForExistence(timeout: 5))
+    }
+
+    func testObjectScanGuideCloseReturnsHome() {
+        let app = launch()
+        app.buttons["objectScanButton"].tap()
+        XCTAssertTrue(app.buttons["guideCloseButton"].waitForExistence(timeout: 5))
+        app.buttons["guideCloseButton"].tap()
         XCTAssertTrue(app.buttons["objectScanButton"].waitForExistence(timeout: 5))
     }
 
@@ -132,6 +166,15 @@ final class LidarScannerUITests: XCTestCase {
         printButton.tap()
         tapSharePrintResult(in: app, timeout: 15)
 
+        XCTAssertTrue(app.progressIndicators["printProgressBar"].waitForExistence(timeout: 5))
+        let stage = app.staticTexts["printStage"]
+        XCTAssertTrue(stage.waitForExistence(timeout: 5))
+        XCTAssertTrue(stage.label.contains("Processing:"), stage.label)
+        savePrintScreenshot("print-progress", app: app)
+
+        XCTAssertTrue(app.buttons["printResultButton"].waitForExistence(timeout: 15))
+        app.buttons["printResultButton"].tap()
+
         let shareSheet = app.otherElements["ActivityListView"]
         XCTAssertTrue(shareSheet.waitForExistence(timeout: 15), "STL share sheet did not open")
         let caption = shareSheet.otherElements["LP.CaptionBar.TopCaption"]
@@ -182,9 +225,8 @@ final class LidarScannerUITests: XCTestCase {
         XCTAssertTrue(printButton.waitForExistence(timeout: 5))
         printButton.tap()
 
-        let alert = app.alerts["Couldn't print scan"]
-        XCTAssertTrue(alert.waitForExistence(timeout: 15))
-        alert.buttons["OK"].tap()
+        XCTAssertTrue(app.staticTexts["printError"].waitForExistence(timeout: 15))
+        app.buttons["Dismiss"].tap()
         XCTAssertTrue(printButton.waitForExistence(timeout: 5))
         XCTAssertFalse(app.otherElements["ActivityListView"].exists)
     }
@@ -197,6 +239,52 @@ final class LidarScannerUITests: XCTestCase {
         XCTAssertTrue(app.buttons["photoPrintButton"].waitForExistence(timeout: 5))
     }
 
+    func testPrintStreamFailureShowsDetailAndRetry() throws {
+        try requirePrintStub()
+        let app = launch(["-UITestSeedSampleScans", "-printBaseURL", Self.stubURL + "/fail", "-printAPIToken", Self.stubToken])
+        app.buttons["myScansLink"].tap()
+        let button = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'print-Room '")).firstMatch
+        XCTAssertTrue(button.waitForExistence(timeout: 5))
+        button.tap()
+        let error = app.staticTexts["printError"]
+        XCTAssertTrue(error.waitForExistence(timeout: 15))
+        XCTAssertEqual(error.label, "Stub failed during repair")
+        XCTAssertTrue(app.buttons["retryPrintButton"].exists)
+        savePrintScreenshot("print-failure", app: app)
+        app.buttons["retryPrintButton"].tap()
+        XCTAssertTrue(error.waitForExistence(timeout: 15))
+        app.buttons["Dismiss"].tap()
+        XCTAssertTrue(button.exists)
+    }
+
+    private func savePrintScreenshot(_ name: String, app: XCUIApplication) {
+        let attachment = XCTAttachment(screenshot: app.screenshot())
+        attachment.name = name
+        attachment.lifetime = .keepAlways
+        add(attachment)
+        if let directory = ProcessInfo.processInfo.environment["PRINT_SHOTS_DIR"] {
+            try? app.screenshot().pngRepresentation.write(to: URL(fileURLWithPath: directory).appendingPathComponent(name + ".png"))
+        }
+    }
+
+    func testPhotoPrintContinuesOnRoomScreen() throws {
+        try requirePrintStub()
+        let app = launch(["-UITestFakePhotoCapture", "-printBaseURL", Self.stubURL, "-printAPIToken", Self.stubToken])
+        app.buttons["photoPrintButton"].tap()
+        XCTAssertTrue(app.buttons["takePhotoAndPrintButton"].waitForExistence(timeout: 5))
+        app.buttons["takePhotoAndPrintButton"].tap()
+        XCTAssertTrue(app.staticTexts["printStage"].waitForExistence(timeout: 5))
+        app.buttons["closeButton"].tap()
+        app.buttons["roomScanButton"].tap()
+        XCTAssertTrue(app.staticTexts["Room Scan Unavailable"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.progressIndicators["printProgressBar"].exists)
+        XCTAssertTrue(app.staticTexts["printStage"].label.contains("Processing:"))
+        savePrintScreenshot("print-banner-room", app: app)
+        XCTAssertTrue(app.buttons["printResultButton"].waitForExistence(timeout: 20))
+        app.buttons["printResultButton"].tap()
+        XCTAssertTrue(app.otherElements["ActivityListView"].waitForExistence(timeout: 5))
+    }
+
     func testPhotoPrintSendsPhotoAndHeightAndOpensSTL() throws {
         try requirePrintStub()
         let app = launch(["-UITestFakePhotoCapture", "-printBaseURL", Self.stubURL, "-printAPIToken", Self.stubToken])
@@ -205,6 +293,9 @@ final class LidarScannerUITests: XCTestCase {
         XCTAssertEqual(app.staticTexts["photoHeight"].waitForExistence(timeout: 5) ? app.staticTexts["photoHeight"].label : nil, "Height: 120 mm")
         app.buttons["takePhotoAndPrintButton"].tap()
         tapSharePrintResult(in: app, timeout: 15)
+
+        XCTAssertTrue(app.buttons["printResultButton"].waitForExistence(timeout: 15))
+        app.buttons["printResultButton"].tap()
 
         let shareSheet = app.otherElements["ActivityListView"]
         XCTAssertTrue(shareSheet.waitForExistence(timeout: 15), "STL share sheet did not open")
@@ -303,9 +394,8 @@ final class LidarScannerUITests: XCTestCase {
         XCTAssertTrue(printButton.waitForExistence(timeout: 5))
         printButton.tap()
 
-        let alert = app.alerts["Couldn't print scan"]
-        XCTAssertTrue(alert.waitForExistence(timeout: 15))
-        XCTAssertTrue(alert.staticTexts.containing(NSPredicate(format: "label CONTAINS 'print token in Settings'")).firstMatch.exists)
+        XCTAssertTrue(app.staticTexts["printError"].waitForExistence(timeout: 15))
+        XCTAssertTrue(app.staticTexts["printError"].label.contains("print token in Settings"))
     }
 
     /// Runs against the deployed endpoint only when `TEST_RUNNER_PRINT_LIVE_URL` and `TEST_RUNNER_PRINT_LIVE_TOKEN` are set for `xcodebuild test`.
@@ -328,6 +418,9 @@ final class LidarScannerUITests: XCTestCase {
         app.swipeDown(velocity: .fast)
         app.buttons["Done"].tapIfExists()
 
+        app.buttons["Dismiss"].firstMatch.tap()
+        XCTAssertFalse(app.buttons["printResultButton"].firstMatch.exists)
+
         app.navigationBars.buttons.element(boundBy: 0).tap()
         app.buttons["photoPrintButton"].tap()
         XCTAssertTrue(app.staticTexts["photoHeight"].waitForExistence(timeout: 5))
@@ -344,6 +437,8 @@ final class LidarScannerUITests: XCTestCase {
     }
 
     private func assertShareSheet(in app: XCUIApplication, captionPrefix: String, errorAlert: String, timeout: TimeInterval) {
+        XCTAssertTrue(app.buttons["printResultButton"].firstMatch.waitForExistence(timeout: timeout))
+        app.buttons["printResultButton"].firstMatch.tap()
         let shareSheet = app.otherElements["ActivityListView"]
         let alert = app.alerts[errorAlert]
         let deadline = Date().addingTimeInterval(timeout)
