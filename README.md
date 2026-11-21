@@ -30,7 +30,7 @@ Apps signed with a free Personal Team expire after 7 days; reconnect the phone a
 ## Using it
 
 - **Room Scan:** tap *Room Scan*, walk slowly around the room pointing the phone at walls, floor and furniture, tap **Done**, then **Save Scan**.
-- **Object Scan:** put the object on a plain surface with room to walk around it. Tap **Continue**, fit the box around the object, tap **Start Capture** and circle it slowly. When the pass completes, do **Another Pass** (e.g. with the object flipped) or **Finish**. The model is then built on the phone, which takes a few minutes.
+- **Object Scan:** follow the five-step guide to choose a matte, textured object and set up even light and a contrasting surface. Tap **Start Scanning**, **Continue**, fit the box snugly, then **Start Capture**. Stay about 30–60 cm away and circle slowly for three passes: chest height, lower near object height, then a rigid object flipped onto its side or a high angle. Follow the live coaching; **How to scan** reopens the guide. Tap **Finish** after three passes for better coverage. The model builds on the phone in a few minutes; keep the app open and the phone plugged in. **Skip** bypasses the guide, not device requirements.
 
 ## Printing a scan
 

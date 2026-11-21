@@ -64,11 +64,7 @@ struct HomeView: View {
                     UnsupportedView(feature: "Room Scan", requirement: "an iPhone or iPad with a LiDAR sensor")
                 }
             case .object:
-                if DeviceSupport.objectScan {
-                    ObjectScanView()
-                } else {
-                    UnsupportedView(feature: "Object Scan", requirement: "an iPhone or iPad with a LiDAR sensor and an A14 chip or newer")
-                }
+                ObjectScanEntryView()
             }
         }
     }

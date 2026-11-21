@@ -36,8 +36,42 @@ final class LidarScannerUITests: XCTestCase {
     func testObjectScanExplainsMissingLiDAR() {
         let app = launch(["-UITestForceUnsupported"])
         app.buttons["objectScanButton"].tap()
+        XCTAssertTrue(app.buttons["guideSkipButton"].waitForExistence(timeout: 5))
+        app.buttons["guideSkipButton"].tap()
         XCTAssertTrue(app.staticTexts["Object Scan Unavailable"].waitForExistence(timeout: 5))
         app.buttons["closeButton"].tap()
+        XCTAssertTrue(app.buttons["objectScanButton"].waitForExistence(timeout: 5))
+    }
+
+    func testObjectScanGuideStepsAndStart() throws {
+        let app = launch(["-UITestForceUnsupported"])
+        app.buttons["objectScanButton"].tap()
+        let label = app.staticTexts["guideStepLabel"]
+        XCTAssertTrue(label.waitForExistence(timeout: 5))
+        for step in 1...5 {
+            XCTAssertEqual(label.label, "Step \(step) of 5")
+            let shot = XCUIScreen.main.screenshot()
+            let attachment = XCTAttachment(screenshot: shot)
+            attachment.name = "guide-\(step)"
+            attachment.lifetime = .keepAlways
+            add(attachment)
+            if let directory = ProcessInfo.processInfo.environment["GUIDE_SCREENSHOT_DIR"] {
+                try shot.pngRepresentation.write(to: URL(fileURLWithPath: directory).appendingPathComponent("guide-\(step).png"))
+            }
+            if step < 5 { app.buttons["guideNextButton"].tap() }
+        }
+        app.buttons["guideBackButton"].tap()
+        XCTAssertEqual(label.label, "Step 4 of 5")
+        app.buttons["guideNextButton"].tap()
+        app.buttons["guideStartButton"].tap()
+        XCTAssertTrue(app.staticTexts["Object Scan Unavailable"].waitForExistence(timeout: 5))
+    }
+
+    func testObjectScanGuideCloseReturnsHome() {
+        let app = launch()
+        app.buttons["objectScanButton"].tap()
+        XCTAssertTrue(app.buttons["guideCloseButton"].waitForExistence(timeout: 5))
+        app.buttons["guideCloseButton"].tap()
         XCTAssertTrue(app.buttons["objectScanButton"].waitForExistence(timeout: 5))
     }
 
