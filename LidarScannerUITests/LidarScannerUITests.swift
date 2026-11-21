@@ -123,7 +123,7 @@ final class LidarScannerUITests: XCTestCase {
         app.buttons["photoPrintButton"].tap()
 
         XCTAssertEqual(app.staticTexts["photoHeight"].waitForExistence(timeout: 5) ? app.staticTexts["photoHeight"].label : nil, "Height: 120 mm")
-        app.buttons["photoPrintButton"].tap()
+        app.buttons["takePhotoAndPrintButton"].tap()
 
         let shareSheet = app.otherElements["ActivityListView"]
         XCTAssertTrue(shareSheet.waitForExistence(timeout: 15), "STL share sheet did not open")
@@ -167,7 +167,7 @@ final class LidarScannerUITests: XCTestCase {
         app.navigationBars.buttons.element(boundBy: 0).tap()
         app.buttons["photoPrintButton"].tap()
         XCTAssertTrue(app.staticTexts["photoHeight"].waitForExistence(timeout: 5))
-        app.buttons["photoPrintButton"].tap()
+        app.buttons["takePhotoAndPrintButton"].tap()
         assertShareSheet(in: app, captionPrefix: "Photo ", errorAlert: "Couldn't print photo", timeout: 240)
         attachScreenshot(app, name: "live-photo-stl")
     }

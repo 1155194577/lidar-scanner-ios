@@ -86,7 +86,7 @@ struct PhotoPrintView: View {
                 .buttonStyle(.borderedProminent)
                 .controlSize(.large)
                 .disabled(model.heightMM == nil || model.isPrinting)
-                .accessibilityIdentifier("photoPrintButton")
+                .accessibilityIdentifier("takePhotoAndPrintButton")
             }
         }
     }
