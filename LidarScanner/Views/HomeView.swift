@@ -6,6 +6,12 @@ struct HomeView: View {
     @State private var showsSettings = false
 
     var body: some View {
+        GeometryReader { geometry in
+            home(compact: geometry.size.height < 700)
+        }
+    }
+
+    private func home(compact: Bool) -> some View {
         NavigationStack {
             List {
                 Section {
@@ -13,25 +19,25 @@ struct HomeView: View {
                         systemImage: ScanKind.room.systemImage,
                         title: "Room Scan",
                         subtitle: "Walls, doors, windows and furniture as a 3D floor model (RoomPlan).",
-                        identifier: "roomScanButton"
+                        identifier: "roomScanButton", compact: compact
                     ) { activeMode = .room }
                     ModeRow(
                         systemImage: ScanKind.object.systemImage,
                         title: "Object Scan",
                         subtitle: "A textured, photoreal 3D model of an object you walk around (Object Capture).",
-                        identifier: "objectScanButton"
+                        identifier: "objectScanButton", compact: compact
                     ) { activeMode = .object }
                     ModeRow(
                         systemImage: "camera.viewfinder",
                         title: "Photo Print",
                         subtitle: "One photo plus the object's LiDAR-measured height, turned into a printable STL.",
-                        identifier: "photoPrintButton"
+                        identifier: "photoPrintButton", compact: compact
                     ) { activeMode = .photo }
                     ModeRow(
                         systemImage: ScanKind.face.systemImage,
                         title: "Face Scan",
                         subtitle: "Your face from the front TrueDepth camera, made into a printable bust STL.",
-                        identifier: "faceScanButton"
+                        identifier: "faceScanButton", compact: compact
                     ) { activeMode = .face }
                 } header: {
                     Text("New Scan")
@@ -57,6 +63,7 @@ struct HomeView: View {
                 }
             }
             .navigationTitle("LiDAR Scanner")
+            .navigationBarTitleDisplayMode(compact ? .inline : .large)
             .toolbar {
                 ToolbarItem(placement: .primaryAction) {
                     Button {
@@ -115,6 +122,7 @@ private struct ModeRow: View {
     let title: String
     let subtitle: String
     let identifier: String
+    let compact: Bool
     let action: () -> Void
 
     var body: some View {
@@ -127,11 +135,12 @@ private struct ModeRow: View {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(title).font(.headline).foregroundStyle(.primary)
                     Text(subtitle).font(.subheadline).foregroundStyle(.secondary)
+                        .lineLimit(compact ? 2 : nil)
                 }
                 Spacer()
                 Image(systemName: "chevron.right").foregroundStyle(.tertiary)
             }
-            .padding(.vertical, 6)
+            .padding(.vertical, compact ? 2 : 6)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)

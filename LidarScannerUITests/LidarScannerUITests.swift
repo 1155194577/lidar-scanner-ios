@@ -463,6 +463,11 @@ final class LidarScannerUITests: XCTestCase {
         app.buttons["takePhotoAndPrintButton"].tap()
         let uploading = app.staticTexts.containing(NSPredicate(format: "label CONTAINS 'Uploading'")).firstMatch
         XCTAssertTrue(uploading.waitForExistence(timeout: 10), "the print never started uploading")
+        let allowNotifications = XCUIApplication(bundleIdentifier: "com.apple.springboard").alerts.buttons["Allow"]
+        if allowNotifications.waitForExistence(timeout: 3) { allowNotifications.tap() }
+        let percent = app.staticTexts["printPercent"]
+        let transferred = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == true AND label != %@", "0%"), object: percent)
+        XCTAssertEqual(XCTWaiter.wait(for: [transferred], timeout: 10), .completed, "no upload bytes were sent before relaunch")
         app.terminate()
 
         app.launchArguments = arguments
