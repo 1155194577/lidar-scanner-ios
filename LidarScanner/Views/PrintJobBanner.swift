@@ -7,7 +7,29 @@ extension View {
 private struct PrintJobBannerModifier: ViewModifier {
     let visible: Bool
     @EnvironmentObject private var manager: PrintJobManager
-    @State private var selected: PrintedModel?
+    @State private var selected: Presentation?
+
+    private enum Presentation: Identifiable {
+        case upload(PrintJob, [String: PrintService.UploadReference])
+        case result(PrintedModel)
+
+        var id: String {
+            switch self {
+            case .upload(let job, _): return "upload-\(job.id)"
+            case .result(let model): return "result-\(model.id)"
+            }
+        }
+    }
+
+    private func show(_ job: PrintJob) {
+        if let references = manager.uploadConfirmations[job.id] {
+            manager.markPresented(job.id)
+            selected = .upload(job, references)
+        } else if let model = manager.printedModel(for: job) {
+            manager.markPresented(job.id)
+            selected = .result(model)
+        }
+    }
 
     func body(content: Content) -> some View {
         VStack(spacing: 0) {
@@ -20,7 +42,7 @@ private struct PrintJobBannerModifier: ViewModifier {
                                     HStack {
                                         Text(job.name).font(.subheadline.bold()).lineLimit(1)
                                         Spacer()
-                                        if job.isFinished {
+                                        if job.isFinished || manager.uploadConfirmations[job.id] != nil {
                                             Button("Dismiss") { manager.dismiss(job) }
                                         }
                                     }
@@ -31,9 +53,14 @@ private struct PrintJobBannerModifier: ViewModifier {
                                             Button("Retry") { manager.retry(job) }
                                                 .accessibilityIdentifier("retryPrintButton")
                                         }
+                                    } else if manager.uploadConfirmations[job.id] != nil {
+                                        Button { show(job) } label: {
+                                            Label("Review upload", systemImage: "checkmark.icloud")
+                                        }
+                                        .accessibilityIdentifier("reviewPrintUpload")
                                     } else if job.result != nil {
-                                        Button { selected = manager.printedModel(for: job) } label: {
-                                            Label("STL ready — Share", systemImage: "square.and.arrow.up")
+                                        Button { show(job) } label: {
+                                            Label("STL ready — View", systemImage: "cube")
                                         }
                                         .accessibilityIdentifier("printResultButton")
                                     } else {
@@ -63,8 +90,19 @@ private struct PrintJobBannerModifier: ViewModifier {
                     .accessibilityIdentifier("printJobBanner")
                 }
         }
-            .sheet(item: $selected) { model in
-                PrintResultView(model: model)
+            .onChange(of: visible && selected == nil ? manager.pendingPresentation : nil, initial: true) { _, id in
+                if let id, let job = manager.jobs.first(where: { $0.id == id }) { show(job) }
+            }
+            .sheet(item: $selected) { presentation in
+                switch presentation {
+                case .upload(let job, let references):
+                    PrintUploadPreview(job: job, references: references) {
+                        selected = nil
+                        manager.confirmPrint(job)
+                    }
+                case .result(let model):
+                    PrintResultView(model: model)
+                }
             }
     }
 }

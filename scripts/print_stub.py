@@ -22,9 +22,11 @@ of the last accepted print request, for UI tests.
 
 Signed uploads: POST /print/uploads takes JSON {"job_id", "files": {name: {"content_type", "size"}}}
 (names: mesh, photo, depth, depth_confidence, face_vertices, view_<i>_photo, view_<i>_depth) and returns {"job_id", "expires_in": 900,
-"uploads": {name: {"url", "method": "PUT", "headers"}}}; a repeated request returns fresh URLs for the same
+"uploads": {name: {"url", "method": "PUT", "headers", "file_id", "get_url"}}}; a repeated request returns fresh URLs for the same
 job. PUT /s3/<job>/<name> needs exactly those headers, no Authorization, a live signature and the declared
-size, else 403 (expired or bad signature, S3-style XML) or 400. POST /print with `job_id` and
+size, else 403 (expired or bad signature, S3-style XML) or 400. GET /print/uploads/<job> confirms
+all planned files exist and refreshes their signed GET URLs. Completion includes a signed `stl_url` for
+the stored STL. /compat uses the older signed-upload response and inline STL. POST /print with `job_id` and
 `uploaded=<names>` (form fields, no file parts) uses the stored files, or answers 409
 {"detail": "upload missing: depth", "missing": ["depth"]}. Test modes go in front of the base path,
 joined by "-": /fail (job errors at repair), /expire (each job's first URL per file is already expired),
@@ -79,7 +81,7 @@ UPLOAD_EXPIRES = 900
 def split_mode(path):
     """('/expire-drop/print', ...) -> ({'expire', 'drop'}, '/print')."""
     parts = path.split("?")[0].rstrip("/").split("/")
-    if len(parts) > 1 and parts[1] and all(mode in MODES for mode in parts[1].split("-")):
+    if len(parts) > 1 and parts[1] and all(mode in (*MODES, "compat") for mode in parts[1].split("-")):
         return set(parts[1].split("-")), "/" + "/".join(parts[2:])
     return set(), path.split("?")[0].rstrip("/")
 
@@ -95,12 +97,15 @@ class Uploads:
 
 
 class Job:
-    def __init__(self, job_id, stem, delay, fail_stage):
+    def __init__(self, job_id, stem, delay, fail_stage, inline_stl):
         self.id = job_id
         self.stem = stem
         self.condition = threading.Condition()
         self.events = []
         self.terminal = None
+        self.inline_stl = inline_stl
+        self.stl = None
+        self.download_slot = {}
         self.report = {"extents_mm": [20.0, 20.0, 20.0], "watertight": True, "volume_cm3": 8.0}
         threading.Thread(target=self.run, args=(delay, fail_stage), daemon=True).start()
 
@@ -126,8 +131,8 @@ class Job:
             if stage == fail_stage:
                 self.emit({"type": "error", "detail": "Stub failed during " + stage})
                 return
-        self.emit({"type": "done", "filename": self.stem + ".stl", "report": self.report,
-                   "stl_base64": base64.b64encode(cube_stl()).decode()})
+        self.stl = cube_stl()
+        self.emit({"type": "done", "filename": self.stem + ".stl", "report": self.report})
 
 
 def cube_stl(size_mm=20.0):
@@ -313,9 +318,16 @@ class Handler(BaseHTTPRequestHandler):
             return self.reply(200, "text/plain", b"ok\n")
         if self.path.rstrip("/") == "/last":
             return self.reply(200, "application/json", json.dumps(Handler.last_request).encode())
+        modes, route = split_mode(self.path)
+        path = route.strip("/").split("/")
+        if len(path) == 3 and path[0] == "s3":
+            return self.read_storage(path[1], path[2])
         if not self.authorized():
             return
-        path = split_mode(self.path)[1].strip("/").split("/")
+        if len(path) == 3 and path[:2] == ["print", "uploads"]:
+            if modes.intersection(("legacy", "compat")):
+                return self.error(404, "not found")
+            return self.confirm_uploads(path[2])
         if len(path) not in (2, 3) or path[0] != "print":
             return self.error(404, "not found")
         with self.jobs_lock:
@@ -331,8 +343,41 @@ class Handler(BaseHTTPRequestHandler):
                 terminal = job.terminal
             if terminal["type"] == "error":
                 return self.error(500, terminal["detail"])
-            return self.reply(200, "model/stl", cube_stl(), {"X-Print-Report": json.dumps(job.report)})
+            return self.reply(200, "model/stl", job.stl, {"X-Print-Report": json.dumps(job.report)})
         self.stream(job)
+
+    def read_reference(self, job_id, name, slot):
+        if time.time() >= slot.get("read_expires", 0):
+            slot.update(read_sig=uuid.uuid4().hex, read_expires=time.time() + UPLOAD_EXPIRES)
+        host = self.headers.get("Host", "127.0.0.1:%d" % self.server.server_address[1])
+        file_id = f"{job_id}/{name}"
+        return {"file_id": file_id, "get_url": f"http://{host}/s3/{file_id}?read={slot['read_sig']}"}
+
+    def confirm_uploads(self, job_id):
+        with self.jobs_lock:
+            uploads = self.uploads.get(job_id)
+            if uploads is None or not uploads.slots.keys() <= uploads.files.keys():
+                return self.error(404, "one or more uploads are missing")
+            for slot in uploads.slots.values():
+                slot["read_expires"] = 0
+            references = {name: self.read_reference(job_id, name, slot) for name, slot in uploads.slots.items()}
+        self.reply(200, "application/json", json.dumps({"job_id": job_id, "uploads": references}).encode())
+
+    def read_storage(self, job_id, name):
+        query = dict(item.split("=", 1) for item in self.path.partition("?")[2].split("&") if "=" in item)
+        with self.jobs_lock:
+            uploads = self.uploads.get(job_id)
+            job = self.jobs.get(job_id)
+            if name == "result.stl" and job and job.stl:
+                slot, item = job.download_slot, ("model/stl", job.stl)
+            else:
+                slot = uploads.slots.get(name) if uploads else None
+                item = uploads.files.get(name) if uploads else None
+        if item is None:
+            return self.error(404, "missing object")
+        if not slot or self.headers.get("Authorization") or query.get("read") != slot.get("read_sig") or time.time() >= slot.get("read_expires", 0):
+            return self.error(403, "invalid or expired read signature")
+        self.reply(200, *item)
 
     def authorized(self):
         if self.token and self.headers.get("Authorization") != "Bearer " + self.token:
@@ -418,6 +463,8 @@ class Handler(BaseHTTPRequestHandler):
                 uploads.slots[name] = slot
                 response[name] = {"url": "http://%s/s3/%s/%s?expires=%d&sig=%s" % (host, job_id, name, expires, slot["sig"]),
                                   "method": "PUT", "headers": slot["headers"]}
+                if "compat" not in modes:
+                    response[name].update(self.read_reference(job_id, name, slot))
         self.reply(200, "application/json", json.dumps({"job_id": job_id, "expires_in": UPLOAD_EXPIRES, "uploads": response}).encode())
 
     def attach_uploads(self, parts, modes):
@@ -541,7 +588,7 @@ class Handler(BaseHTTPRequestHandler):
             fail_stage = self.fail_stage or ("repair" if "fail" in modes else None)
             with self.jobs_lock:
                 if job_id not in self.jobs:
-                    self.jobs[job_id] = Job(job_id, stem, self.delay, fail_stage)
+                    self.jobs[job_id] = Job(job_id, stem, self.delay, fail_stage, bool(modes.intersection(("compat", "legacy"))))
                 job = self.jobs[job_id]
             return self.stream(job)
         time.sleep(self.delay)
@@ -574,6 +621,14 @@ class Handler(BaseHTTPRequestHandler):
                     events = job.events[cursor:]
                     cursor = len(job.events)
                 for event in events:
+                    if event["type"] == "done":
+                        if job.inline_stl:
+                            event = dict(event, stl_base64=base64.b64encode(job.stl).decode())
+                        else:
+                            with self.jobs_lock:
+                                reference = self.read_reference(job.id, "result.stl", job.download_slot)
+                            event = dict(event, stl_url=reference["get_url"], stl_file_id=reference["file_id"],
+                                         stl_expires_in=UPLOAD_EXPIRES)
                     self.line(event)
                     if event["type"] in ("done", "error"):
                         return

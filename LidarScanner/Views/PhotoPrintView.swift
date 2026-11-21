@@ -131,6 +131,8 @@ struct PrintResultView: View {
         NavigationStack {
             List {
                 Section {
+                    STLPreview(url: model.url)
+                        .listRowInsets(EdgeInsets())
                     Label(model.url.lastPathComponent, systemImage: "doc")
                 }
                 Section {
@@ -157,7 +159,7 @@ struct PrintResultView: View {
                 }
             }
         }
-        .presentationDetents([.medium, .large])
+        .presentationDetents([.large])
         .sheet(isPresented: $isSharing) {
             ActivityView(items: [model.url]) { isSharing = false }
                 .presentationDetents([.medium, .large])

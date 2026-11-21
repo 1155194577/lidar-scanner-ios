@@ -9,6 +9,7 @@
 /* Begin PBXBuildFile section */
 		09C8BBAB72BE69BBDE73BED8 /* OpenBox.usdz in Resources */ = {isa = PBXBuildFile; fileRef = 9798F21055C5CDEBEF097AA8 /* OpenBox.usdz */; };
 		0DC82092F32565199032FEAF /* ObjectScanGuideView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E49C636CBB0CB09E509412FD /* ObjectScanGuideView.swift */; };
+		12815EA379B5AEFDD3A4FB57 /* STLPreview.swift in Sources */ = {isa = PBXBuildFile; fileRef = 17B0A8367A49E6E815818FED /* STLPreview.swift */; };
 		15A21CE618630EE491C5B685 /* ObjectScanView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 186B1783B50F7042BF77067E /* ObjectScanView.swift */; };
 		1C66531BCFA58EDA3570944E /* ClosedBox.usdz in Resources */ = {isa = PBXBuildFile; fileRef = 43298E611FFF7901945110E5 /* ClosedBox.usdz */; };
 		2C2970A3478BF16445404766 /* KeychainStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4ADE67AD7F6A66051B9B8B61 /* KeychainStore.swift */; };
@@ -30,6 +31,7 @@
 		8667ED2BDD60E0D6F87B2D73 /* PhotoPrintTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5C087DF6219678C4951C8740 /* PhotoPrintTests.swift */; };
 		8798B9B3B8ED9FD73CE5F592 /* ActivityView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C8407C2985E2FFF7986A9BC4 /* ActivityView.swift */; };
 		87F1D42B3348073E27952807 /* PrintJobBanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = D816C91F3745899FFA9D5632 /* PrintJobBanner.swift */; };
+		8D1E278A80A2CFC32F0A3705 /* PrintUploadPreview.swift in Sources */ = {isa = PBXBuildFile; fileRef = 474EFC4CD927A9D944F26D00 /* PrintUploadPreview.swift */; };
 		8D24E52EA9DBE0905CAD9F8B /* PrintJobManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 86C1D1E620A18A53EC63D7A0 /* PrintJobManager.swift */; };
 		91752881DAE2BCBA116E7E03 /* FaceScanView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0D629D876B83F892C7BB209 /* FaceScanView.swift */; };
 		96506DE04905D6C3933F26AA /* PhotoPrintView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4030F8493820551CA06FD224 /* PhotoPrintView.swift */; };
@@ -70,11 +72,13 @@
 		0948124D94F88A05132C8D1C /* PrintService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PrintService.swift; sourceTree = "<group>"; };
 		11D27955B848FD430FD3595F /* FaceCapture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FaceCapture.swift; sourceTree = "<group>"; };
 		1327490574893FDE679AF73E /* LaunchArguments.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LaunchArguments.swift; sourceTree = "<group>"; };
+		17B0A8367A49E6E815818FED /* STLPreview.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = STLPreview.swift; sourceTree = "<group>"; };
 		186B1783B50F7042BF77067E /* ObjectScanView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ObjectScanView.swift; sourceTree = "<group>"; };
 		3E4B9C6E706A7F0A1044D1D6 /* PrintServiceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PrintServiceTests.swift; sourceTree = "<group>"; };
 		4030F8493820551CA06FD224 /* PhotoPrintView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhotoPrintView.swift; sourceTree = "<group>"; };
 		43298E611FFF7901945110E5 /* ClosedBox.usdz */ = {isa = PBXFileReference; lastKnownFileType = file.usdz; path = ClosedBox.usdz; sourceTree = "<group>"; };
 		471EDA3FC0EDA84EE2B301B7 /* MeshHoleFinder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeshHoleFinder.swift; sourceTree = "<group>"; };
+		474EFC4CD927A9D944F26D00 /* PrintUploadPreview.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PrintUploadPreview.swift; sourceTree = "<group>"; };
 		4ADE67AD7F6A66051B9B8B61 /* KeychainStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeychainStore.swift; sourceTree = "<group>"; };
 		4DC04ECF5F76D33ACA2794D6 /* FaceCaptureTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FaceCaptureTests.swift; sourceTree = "<group>"; };
 		54FB452B361CBD769754AC19 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
@@ -142,9 +146,11 @@
 				186B1783B50F7042BF77067E /* ObjectScanView.swift */,
 				4030F8493820551CA06FD224 /* PhotoPrintView.swift */,
 				D816C91F3745899FFA9D5632 /* PrintJobBanner.swift */,
+				474EFC4CD927A9D944F26D00 /* PrintUploadPreview.swift */,
 				B2BE16B613004BEB3D632B32 /* RoomScanView.swift */,
 				A3E8DCDB974B375AADE89EB2 /* ScansListView.swift */,
 				54FB452B361CBD769754AC19 /* SettingsView.swift */,
+				17B0A8367A49E6E815818FED /* STLPreview.swift */,
 			);
 			path = Views;
 			sourceTree = "<group>";
@@ -386,8 +392,10 @@
 				87F1D42B3348073E27952807 /* PrintJobBanner.swift in Sources */,
 				8D24E52EA9DBE0905CAD9F8B /* PrintJobManager.swift in Sources */,
 				4C5367025D965D1E2158BDC9 /* PrintService.swift in Sources */,
+				8D1E278A80A2CFC32F0A3705 /* PrintUploadPreview.swift in Sources */,
 				F5E1F4B69A346854F7F23658 /* RoomScanView.swift in Sources */,
 				74F3DA10CEEDBA6012D63E72 /* STLExporter.swift in Sources */,
+				12815EA379B5AEFDD3A4FB57 /* STLPreview.swift in Sources */,
 				F8AC652EAB45CEE69EF26635 /* ScanStore.swift in Sources */,
 				5F97E84126558BAE031049BB /* ScansListView.swift in Sources */,
 				4A92011FA9CC945A746DB9B9 /* SettingsView.swift in Sources */,
