@@ -116,9 +116,13 @@ struct PrintService {
 
     /// The single multipart `POST /print` (servers without signed uploads).
     func makeRequest(for input: PrintInput, boundary: String = "Boundary-\(UUID().uuidString)", jobID: String? = nil) throws -> URLRequest {
+        makeRequest(for: try payload(for: input), boundary: boundary, jobID: jobID)
+    }
+
+    func makeRequest(for payload: PrintPayload, boundary: String = "Boundary-\(UUID().uuidString)", jobID: String? = nil) -> URLRequest {
         var form = MultipartForm(boundary: boundary)
         if let jobID { form.addField(name: "job_id", value: jobID) }
-        try payload(for: input).write(to: &form)
+        payload.write(to: &form)
         return post(form, to: endpoint, accept: "application/x-ndjson, model/stl", timeout: 600)
     }
 
@@ -144,7 +148,9 @@ struct PrintService {
     }
 
     /// The input's form fields and files, in the order the multipart POST sends them.
-    func payload(for input: PrintInput) throws -> PrintPayload {
+    func payload(for input: PrintInput) throws -> PrintPayload { try Self.payload(for: input) }
+
+    static func payload(for input: PrintInput) throws -> PrintPayload {
         var form = PrintPayload()
         switch input {
         case .mesh(let url):
@@ -206,17 +212,24 @@ struct PrintService {
                     jobID: String? = nil, uploads: PrintUploadState? = nil,
                     onProgress: @escaping @Sendable (PrintProgress) -> Void = { _ in },
                     onAccepted: @escaping @Sendable (String) -> Void = { _ in }) async throws -> URL {
+        try await requestSTL(for: try payload(for: input), name: name, in: directory, jobID: jobID, uploads: uploads,
+                             onProgress: onProgress, onAccepted: onAccepted)
+    }
+
+    func requestSTL(for payload: PrintPayload, name: String, in directory: URL = PrintService.outputDirectory,
+                    jobID: String? = nil, uploads: PrintUploadState? = nil,
+                    onProgress: @escaping @Sendable (PrintProgress) -> Void = { _ in },
+                    onAccepted: @escaping @Sendable (String) -> Void = { _ in }) async throws -> URL {
         let state = uploads ?? PrintUploadState()
         guard signedUploads, let jobID, !state.legacy else {
-            return try await receive(try makeRequest(for: input, jobID: jobID), name: name, in: directory, onProgress: onProgress, onAccepted: onAccepted)
+            return try await receive(makeRequest(for: payload, jobID: jobID), name: name, in: directory, onProgress: onProgress, onAccepted: onAccepted)
         }
-        let payload = try payload(for: input)
         var conflicts = 0
         while true {
             let pending = payload.files.filter { !state.isUploaded($0.name) }
             if !pending.isEmpty, !(try await uploadOrFallBack(pending, jobID: jobID, state: state, onProgress: onProgress)) {
                 state.legacy = true
-                return try await receive(try makeRequest(for: input, jobID: jobID), name: name, in: directory, onProgress: onProgress, onAccepted: onAccepted)
+                return try await receive(makeRequest(for: payload, jobID: jobID), name: name, in: directory, onProgress: onProgress, onAccepted: onAccepted)
             }
             do {
                 return try await receive(makeSubmitRequest(for: payload, jobID: jobID), name: name, in: directory, onProgress: onProgress, onAccepted: onAccepted)
@@ -237,7 +250,7 @@ struct PrintService {
         let get_url: URL?
     }
 
-    struct UploadReference: Decodable, Equatable {
+    struct UploadReference: Codable, Equatable {
         let file_id: String
         let get_url: URL
     }
@@ -246,21 +259,36 @@ struct PrintService {
         var request = URLRequest(url: uploadsEndpoint.appendingPathComponent(jobID))
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         if let token { request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization") }
-        struct Confirmation: Decodable { let uploads: [String: UploadReference] }
+        struct Confirmation: Decodable {
+            let files: [String: UploadReference]
+
+            private enum CodingKeys: String, CodingKey { case files, uploads }
+
+            init(from decoder: Decoder) throws {
+                let container = try decoder.container(keyedBy: CodingKeys.self)
+                files = try container.decodeIfPresent([String: UploadReference].self, forKey: .files)
+                    ?? container.decode([String: UploadReference].self, forKey: .uploads)
+            }
+        }
         let (data, response) = try await session.data(for: request)
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
         guard (200..<300).contains(status) else {
             throw PrintError.server(status: status, message: Self.errorMessage(from: data))
         }
-        return try JSONDecoder().decode(Confirmation.self, from: data).uploads
+        return try JSONDecoder().decode(Confirmation.self, from: data).files
     }
 
     func prepareUploads(for input: PrintInput, jobID: String, state: PrintUploadState,
                         onProgress: @escaping @Sendable (PrintProgress) -> Void) async throws -> [String: UploadReference]? {
+        try await prepareUploads(for: try payload(for: input), jobID: jobID, state: state, onProgress: onProgress)
+    }
+
+    func prepareUploads(for payload: PrintPayload, jobID: String, state: PrintUploadState,
+                        onProgress: @escaping @Sendable (PrintProgress) -> Void) async throws -> [String: UploadReference]? {
         guard signedUploads, !state.legacy else { return nil }
-        let files = try payload(for: input).files
+        let files = payload.files
         let pending = files.filter { !state.isUploaded($0.name) }
-        if !pending.isEmpty, !(try await upload(pending, jobID: jobID, state: state, onProgress: onProgress)) {
+        if !pending.isEmpty, !(try await uploadOrFallBack(pending, jobID: jobID, state: state, onProgress: onProgress)) {
             state.legacy = true
             return nil
         }
@@ -272,7 +300,9 @@ struct PrintService {
             state.forget(files.map(\.name))
             throw PrintError.server(status: status, message: message)
         }
-        guard files.allSatisfy({ references[$0.name] != nil }) else {
+        let missing = files.map(\.name).filter { references[$0] == nil }
+        guard missing.isEmpty else {
+            state.forget(missing)
             throw PrintError.unexpectedResponse("missing uploaded files")
         }
         return references
@@ -656,29 +686,97 @@ struct PrintPayload: PrintFormBuilder {
             }
         }
     }
+
+    private enum StoredPart: Codable {
+        case field(name: String, value: String)
+        case file(name: String, fileName: String, contentType: String)
+    }
+
+    /// Writes the payload to `folder` (a manifest plus one file per part), so a relaunched app can still send it.
+    func save(to folder: URL) throws {
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let stored: [StoredPart] = try parts.map { part in
+            switch part {
+            case .field(let name, let value): return .field(name: name, value: value)
+            case .file(let file):
+                try file.data.write(to: folder.appendingPathComponent(file.name), options: .atomic)
+                return .file(name: file.name, fileName: file.fileName, contentType: file.contentType)
+            }
+        }
+        try JSONEncoder().encode(stored).write(to: folder.appendingPathComponent("payload.json"), options: .atomic)
+    }
+
+    static func load(from folder: URL) throws -> PrintPayload {
+        let stored = try JSONDecoder().decode([StoredPart].self, from: Data(contentsOf: folder.appendingPathComponent("payload.json")))
+        var payload = PrintPayload()
+        for part in stored {
+            switch part {
+            case .field(let name, let value): payload.addField(name: name, value: value)
+            case .file(let name, let fileName, let contentType):
+                payload.addFile(name: name, fileName: fileName, contentType: contentType, data: try Data(contentsOf: folder.appendingPathComponent(name)))
+            }
+        }
+        return payload
+    }
 }
 
-/// Which of a job's files already reached their signed URLs, kept across resends of the same job.
+/// Which of a job's files already reached their signed URLs, kept across resends of the same job and,
+/// with a `file`, across app relaunches.
 final class PrintUploadState: @unchecked Sendable {
+    private struct Stored: Codable {
+        var uploaded = Set<String>()
+        var legacy = false
+        var supportsConfirmation = false
+    }
+
     private let lock = NSLock()
-    private var uploaded = Set<String>()
-    private var usesMultipart = false
-    private var hasReadURLs = false
+    private let file: URL?
+    private var stored: Stored
+
+    init(file: URL? = nil) {
+        self.file = file
+        stored = file.flatMap { try? JSONDecoder().decode(Stored.self, from: Data(contentsOf: $0)) } ?? Stored()
+    }
 
     /// The server has no signed uploads, so this job uses the single multipart POST.
     var legacy: Bool {
-        get { lock.withLock { usesMultipart } }
-        set { lock.withLock { usesMultipart = newValue } }
+        get { lock.withLock { stored.legacy } }
+        set { change { $0.legacy = newValue } }
     }
 
-    var uploadedNames: Set<String> { lock.withLock { uploaded } }
+    var uploadedNames: Set<String> { lock.withLock { stored.uploaded } }
+    /// Step 1 returned read URLs, so the uploaded files can be confirmed before step 3.
     var supportsConfirmation: Bool {
-        get { lock.withLock { hasReadURLs } }
-        set { lock.withLock { hasReadURLs = newValue } }
+        get { lock.withLock { stored.supportsConfirmation } }
+        set { change { $0.supportsConfirmation = newValue } }
     }
-    func isUploaded(_ name: String) -> Bool { lock.withLock { uploaded.contains(name) } }
-    func markUploaded(_ name: String) { _ = lock.withLock { uploaded.insert(name) } }
-    func forget(_ names: [String]) { lock.withLock { uploaded.subtract(names) } }
+    func isUploaded(_ name: String) -> Bool { lock.withLock { stored.uploaded.contains(name) } }
+    func markUploaded(_ name: String) { change { _ = $0.uploaded.insert(name) } }
+    func forget(_ names: [String]) { change { $0.uploaded.subtract(names) } }
+
+    private func change(_ update: (inout Stored) -> Void) {
+        lock.withLock {
+            update(&stored)
+            guard let file else { return }
+            try? FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try? JSONEncoder().encode(stored).write(to: file, options: .atomic)
+        }
+    }
+
+    private static let registryLock = NSLock()
+    nonisolated(unsafe) private static var registry: [String: PrintUploadState] = [:]
+
+    /// The one state per job, saved in `directory/<jobID>/`, shared by the print and by uploads that finish after a relaunch.
+    static func forJob(_ jobID: String, in directory: URL) -> PrintUploadState {
+        registryLock.withLock {
+            if let state = registry[jobID] { return state }
+            let state = PrintUploadState(file: directory.appendingPathComponent(jobID, isDirectory: true).appendingPathComponent("upload-state.json"))
+            registry[jobID] = state
+            return state
+        }
+    }
+
+    static func discard(_ jobID: String) { _ = registryLock.withLock { registry.removeValue(forKey: jobID) } }
 }
 
 /// PUTs a file to a signed URL and returns the status and body.

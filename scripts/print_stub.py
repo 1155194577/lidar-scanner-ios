@@ -24,14 +24,16 @@ Signed uploads: POST /print/uploads takes JSON {"job_id", "files": {name: {"cont
 (names: mesh, photo, depth, depth_confidence, face_vertices, view_<i>_photo, view_<i>_depth) and returns {"job_id", "expires_in": 900,
 "uploads": {name: {"url", "method": "PUT", "headers", "file_id", "get_url"}}}; a repeated request returns fresh URLs for the same
 job. PUT /s3/<job>/<name> needs exactly those headers, no Authorization, a live signature and the declared
-size, else 403 (expired or bad signature, S3-style XML) or 400. GET /print/uploads/<job> confirms
-all planned files exist and refreshes their signed GET URLs. Completion includes a signed `stl_url` for
-the stored STL. /compat uses the older signed-upload response and inline STL. POST /print with `job_id` and
+size, else 403 (expired or bad signature, S3-style XML) or 400. GET /print/uploads/<job> returns
+`files` with the ID, size and refreshed signed GET URL of each existing object, or 404 if none exist.
+Completion includes a signed `stl_url` for the stored STL. /compat uses the older signed-upload
+response and inline STL. POST /print with `job_id` and
 `uploaded=<names>` (form fields, no file parts) uses the stored files, or answers 409
 {"detail": "upload missing: depth", "missing": ["depth"]}. Test modes go in front of the base path,
 joined by "-": /fail (job errors at repair), /expire (each job's first URL per file is already expired),
 /drop (the first submit of each job reports its first file missing), /legacy (no /print/uploads: 405),
-/deny (every PUT is refused 403 AccessDenied, like a bucket without an IAM policy).
+/deny (every PUT is refused 403 AccessDenied, like a bucket without an IAM policy),
+/slow (every PUT takes 4 s, so a test can quit the app mid-upload).
 
 POST /photo-check takes `photo` plus optional `camera_transform` and answers
 `{ok, issues: [{code, message}], camera_pitch_deg, angle_checked, max_pitch_deg}`; like the
@@ -74,7 +76,7 @@ def upload_filename(name):
 
 
 MESH_TYPES = {"model/vnd.usdz+zip": ".usdz", "model/obj": ".obj", "application/x-ply": ".ply"}
-MODES = ("fail", "expire", "drop", "legacy", "deny")
+MODES = ("fail", "expire", "drop", "legacy", "deny", "slow")
 UPLOAD_EXPIRES = 900
 
 
@@ -94,6 +96,7 @@ class Uploads:
         self.stats = {"url_requests": 0, "puts": 0, "rejected_puts": 0, "conflicts": 0}
         self.dropped = False
         self.denied = False
+        self.slow = False
 
 
 class Job:
@@ -356,12 +359,14 @@ class Handler(BaseHTTPRequestHandler):
     def confirm_uploads(self, job_id):
         with self.jobs_lock:
             uploads = self.uploads.get(job_id)
-            if uploads is None or not uploads.slots.keys() <= uploads.files.keys():
-                return self.error(404, "one or more uploads are missing")
-            for slot in uploads.slots.values():
+            if uploads is None or not uploads.files:
+                return self.error(404, "no uploaded files for this job")
+            references = {}
+            for name, (_, data) in uploads.files.items():
+                slot = uploads.slots[name]
                 slot["read_expires"] = 0
-            references = {name: self.read_reference(job_id, name, slot) for name, slot in uploads.slots.items()}
-        self.reply(200, "application/json", json.dumps({"job_id": job_id, "uploads": references}).encode())
+                references[name] = dict(self.read_reference(job_id, name, slot), size=len(data))
+        self.reply(200, "application/json", json.dumps({"job_id": job_id, "files": references}).encode())
 
     def read_storage(self, job_id, name):
         query = dict(item.split("=", 1) for item in self.path.partition("?")[2].split("&") if "=" in item)
@@ -421,6 +426,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self.s3_error(uploads, *refusal)
             return self.reply(400, "application/xml", b"<Error><Code>IncompleteBody</Code><Message>size differs from the declared size</Message></Error>")
         body = self.rfile.read(length)
+        if uploads.slow:
+            time.sleep(4)
         with self.jobs_lock:
             uploads.files[name] = (slot["content_type"], body)
             uploads.stats["puts"] += 1
@@ -450,6 +457,7 @@ class Handler(BaseHTTPRequestHandler):
             uploads = self.uploads.setdefault(job_id, Uploads())
             uploads.stats["url_requests"] += 1
             uploads.denied = "deny" in modes
+            uploads.slow = "slow" in modes
             for name, spec in files.items():
                 if not is_upload_name(name):
                     return self.error(422, "unknown upload " + name)

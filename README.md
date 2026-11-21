@@ -82,7 +82,7 @@ every 2 seconds, and still supports legacy STL clients. Use `--fail-stage repair
 mid-stream error, or set the app's server URL to `http://127.0.0.1:8765/fail` to exercise
 failure/Retry UI against the same stub instance. The stub also hands out signed upload
 URLs on itself: `/expire` makes each job's first URL per file already expired, `/drop` makes the
-first submit report a file missing (409), `/legacy` answers 405 to `/print/uploads`, `/deny` refuses every PUT with 403; modes combine,
+first submit report a file missing (409), `/legacy` answers 405 to `/print/uploads`, `/deny` refuses every PUT with 403, `/slow` takes 4 s per PUT; modes combine,
 e.g. `http://127.0.0.1:8765/expire-drop`. No second stub is required by the UI tests.
 It keeps jobs in memory, supports replay/result routes and idempotent submissions, and
 continues processing after a client disconnects. Restarting it clears its jobs.
