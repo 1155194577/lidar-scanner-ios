@@ -258,10 +258,10 @@ private final class PrintTransfer: NSObject, URLSessionDataDelegate, @unchecked 
         guard continuation != nil else { return }
         buffer.append(data)
         guard streaming else { return }
+        if !data.isEmpty { resetWatchdog() }
         while let newline = buffer.firstIndex(of: 10), continuation != nil {
             let line = Data(buffer[..<newline])
             buffer.removeSubrange(...newline)
-            resetWatchdog()
             if !line.isEmpty { parse(line) }
         }
     }

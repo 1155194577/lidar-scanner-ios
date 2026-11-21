@@ -179,6 +179,16 @@ final class PrintServiceTests: XCTestCase {
         } catch { XCTAssertTrue(error.localizedDescription.contains("Lost contact with the print server")) }
     }
 
+    func testSlowTerminalLineDoesNotTimeOutWhileBytesArrive() async throws {
+        StubProtocol.chunkDelay = 0.01
+        defer { StubProtocol.chunkDelay = 0 }
+        StubProtocol.handler = { _ in
+            (200, "application/x-ndjson", Data((#"{"type":"done","stl_base64":"c3Rs"}"# + "\n").utf8))
+        }
+        let url = try await service(stallTimeout: 0.1).requestSTL(for: .photo(Data([1]), heightMM: 10), name: "slow", in: directory)
+        XCTAssertEqual(try Data(contentsOf: url), Data("stl".utf8))
+    }
+
     func testClientJobIDAndCentralizedRoutes() throws {
         let service = try PrintService(baseURL: "http://print.test", token: "abc")
         let request = try service.makeRequest(for: .photo(Data([1]), heightMM: 10), jobID: "client-id")
@@ -268,6 +278,7 @@ final class PrintServiceTests: XCTestCase {
 private final class StubProtocol: URLProtocol {
     nonisolated(unsafe) static var handler: ((URLRequest) -> (Int, String, Data))?
     nonisolated(unsafe) static var finishLoading = true
+    nonisolated(unsafe) static var chunkDelay: TimeInterval = 0
 
     override class func canInit(with request: URLRequest) -> Bool { true }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
@@ -280,7 +291,10 @@ private final class StubProtocol: URLProtocol {
         let (status, contentType, data) = handler(request)
         let response = HTTPURLResponse(url: request.url!, statusCode: status, httpVersion: "HTTP/1.1", headerFields: ["Content-Type": contentType])!
         client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
-        for chunk in data { client?.urlProtocol(self, didLoad: Data([chunk])) }
+        for chunk in data {
+            if Self.chunkDelay > 0 { Thread.sleep(forTimeInterval: Self.chunkDelay) }
+            client?.urlProtocol(self, didLoad: Data([chunk]))
+        }
         if Self.finishLoading { client?.urlProtocolDidFinishLoading(self) }
     }
 
