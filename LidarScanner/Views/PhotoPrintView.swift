@@ -5,6 +5,7 @@ import SwiftUI
 /// Single-photo print: measure the object's height with LiDAR (tap its base, then its top), then send one photo plus the height to the print server.
 struct PhotoPrintView: View {
     @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject private var printJobs: PrintJobManager
     @StateObject private var model = PhotoPrintModel(fake: LaunchArguments.contains(LaunchArguments.fakePhotoCapture))
 
     var body: some View {
@@ -57,7 +58,7 @@ struct PhotoPrintView: View {
                 Text((model.photoIssues ?? []).map(\.message).joined(separator: "\n"))
             }
             .alert("Couldn't print photo", isPresented: Binding(get: { model.errorMessage != nil }, set: { if !$0 { model.errorMessage = nil } })) {
-                Button("Retry") { model.print() }
+                Button("Retry") { model.print(using: printJobs) }
                 Button("Dismiss", role: .cancel) {}
             } message: {
                 Text(model.errorMessage ?? "")
@@ -82,7 +83,7 @@ struct PhotoPrintView: View {
                     .controlSize(.large)
                     .disabled(model.isFake || model.base == nil)
                 Button {
-                    model.print()
+                    model.print(using: printJobs)
                 } label: {
                     Label("Take Photo & Print", systemImage: "printer")
                 }

@@ -489,12 +489,6 @@ final class LidarScannerUITests: XCTestCase {
         share.tap()
     }
 
-    private func openPrintResult(in app: XCUIApplication, timeout: TimeInterval) {
-        let result = app.buttons["printResultButton"].firstMatch
-        XCTAssertTrue(result.waitForExistence(timeout: timeout), "Print job did not finish")
-        result.tap()
-    }
-
     private func assertShareSheet(in app: XCUIApplication, captionPrefix: String, errorAlert: String, timeout: TimeInterval) {
         tapSharePrintResult(in: app, timeout: timeout)
         let shareSheet = app.otherElements["ActivityListView"]
