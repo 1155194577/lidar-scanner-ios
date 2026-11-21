@@ -395,6 +395,22 @@ final class LidarScannerUITests: XCTestCase {
         XCTAssertTrue(app.buttons["Copy S3 Link"].exists)
         XCTAssertFalse(app.buttons["printResultButton"].exists)
         savePrintScreenshot("s3-upload-preview", app: app)
+
+        let jobID = try XCTUnwrap(fileID.label.split(separator: "/").first)
+        var invalidate = URLRequest(url: try XCTUnwrap(URL(string: "\(Self.stubHost)/print/uploads/\(jobID)")))
+        invalidate.setValue("Bearer \(Self.stubToken)", forHTTPHeaderField: "Authorization")
+        let expired = expectation(description: "stub rotated signed GET to invalidate the preview URL")
+        URLSession.shared.dataTask(with: invalidate) { _, response, _ in
+            XCTAssertEqual((response as? HTTPURLResponse)?.statusCode, 200)
+            expired.fulfill()
+        }.resume()
+        wait(for: [expired], timeout: 5)
+        app.buttons["closePrintUploadPreview"].tap()
+        let review = app.buttons["reviewPrintUpload"]
+        XCTAssertTrue(review.waitForExistence(timeout: 5))
+        review.tap()
+        XCTAssertTrue(photo.waitForExistence(timeout: 15), "Preview did not recover from an expired signed GET")
+
         let confirm = app.buttons["confirmS3Print"]
         XCTAssertTrue(confirm.isEnabled)
         confirm.tap()

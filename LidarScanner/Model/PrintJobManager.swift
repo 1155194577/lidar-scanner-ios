@@ -135,7 +135,11 @@ final class PrintJobManager: ObservableObject {
     }
 
     func refreshUpload(_ job: PrintJob) async throws -> [String: PrintService.UploadReference] {
-        try await service(job).confirmedUploads(jobID: job.id)
+        let references = try await service(job).confirmedUploads(jobID: job.id)
+        if uploadConfirmations[job.id] != nil {
+            uploadConfirmations[job.id] = references
+        }
+        return references
     }
 
     func confirmPrint(_ job: PrintJob) {

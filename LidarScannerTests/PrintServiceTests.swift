@@ -883,6 +883,40 @@ final class PrintServiceTests: XCTestCase {
         XCTAssertEqual(uploader.puts.count, 3)
     }
 
+    @MainActor
+    func testRefreshReplacesReferencesForReopenedUploadPreview() async throws {
+        let suite = "PrintJobs-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let client = try service(signedUploads: true, uploader: FakeUploader())
+        let manager = PrintJobManager(defaults: defaults, notifications: false, makeService: { _, _ in client })
+        var confirmationCount = 0
+        StubProtocol.handler = { request in
+            let path = request.url!.path
+            if path == "/print/uploads", request.httpMethod == "POST" {
+                return (200, "application/json", Data(#"{"uploads":{"photo":{"url":"https://s3.test/photo","file_id":"photo","get_url":"https://s3.test/preview"}}}"#.utf8))
+            }
+            XCTAssertTrue(path.hasPrefix("/print/uploads/"))
+            XCTAssertEqual(request.httpMethod, "GET")
+            confirmationCount += 1
+            return (200, "application/json", Data("""
+            {"uploads":{"photo":{"file_id":"photo","get_url":"https://s3.test/preview?v=\(confirmationCount)"}}}
+            """.utf8))
+        }
+        manager.start(input: .photo(Data("jpeg".utf8), heightMM: 10), name: "Photo", kind: "photo")
+        let job = try XCTUnwrap(manager.jobs.first)
+        defer { manager.dismiss(job) }
+        let ready = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            manager.uploadConfirmations[job.id] != nil
+        }, object: nil)
+        await fulfillment(of: [ready], timeout: 5)
+        XCTAssertEqual(manager.uploadConfirmations[job.id]?["photo"]?.get_url.query, "v=1")
+
+        let fresh = try await manager.refreshUpload(job)
+        XCTAssertEqual(fresh["photo"]?.get_url.query, "v=2")
+        XCTAssertEqual(manager.uploadConfirmations[job.id], fresh)
+    }
+
     func testSTLPreviewParsesASCIITrianglesAndRejectsEmptyMeshes() throws {
         let mesh = try XCTUnwrap(STLMesh(data: Data("""
         solid sample
