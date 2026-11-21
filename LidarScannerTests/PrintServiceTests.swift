@@ -300,6 +300,29 @@ final class PrintServiceTests: XCTestCase {
         manager.dismiss(manager.jobs[0])
     }
 
+    @MainActor
+    func testDismissDeletesResultAndLateDownloadCopies() throws {
+        let suite = "PrintJobs-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let job = PrintJob(id: UUID().uuidString, name: "Cleanup", kind: "photo", baseURL: PrintService.configuredBaseURL)
+        defaults.set(try JSONEncoder().encode([job]), forKey: "printJobs")
+        let manager = PrintJobManager(defaults: defaults, notifications: false)
+        try FileManager.default.createDirectory(at: PrintJobManager.directory, withIntermediateDirectories: true)
+        let raw = PrintJobManager.directory.appendingPathComponent(job.id).appendingPathExtension("stl")
+        try Data("stl".utf8).write(to: raw)
+        manager.complete(id: job.id, result: .success(raw))
+        let result = try XCTUnwrap(manager.jobs.first?.result)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: result.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: raw.path))
+        manager.dismiss(manager.jobs[0])
+        XCTAssertFalse(FileManager.default.fileExists(atPath: result.deletingLastPathComponent().path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: raw.path))
+        try Data("late download".utf8).write(to: raw)
+        manager.complete(id: job.id, result: .success(raw), source: .download)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: raw.path))
+    }
+
     func testPersistedResultUsesRelativePathAndMigratesOldContainer() throws {
         let legacy = #"{"id":"job","name":"Cube","kind":"photo","baseURL":"http://print.test","result":"file:///old-container/Library/Application%20Support/PrintJobs/job/Cube.stl"}"#
         let job = try JSONDecoder().decode(PrintJob.self, from: Data(legacy.utf8))

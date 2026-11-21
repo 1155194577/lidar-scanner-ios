@@ -122,6 +122,8 @@ final class PrintJobManager: ObservableObject {
         tokens.removeValue(forKey: job.id)
         PrintBackgroundDownload.shared.cancel(id: job.id)
         downloads.remove(job.id)
+        try? FileManager.default.removeItem(at: Self.directory.appendingPathComponent(job.id, isDirectory: true))
+        removeTransferFile(job.id)
         persist()
     }
 
@@ -215,8 +217,15 @@ final class PrintJobManager: ObservableObject {
 
     enum Transfer { case stream, download }
 
+    private func removeTransferFile(_ id: String) {
+        try? FileManager.default.removeItem(at: Self.directory.appendingPathComponent(id).appendingPathExtension("stl"))
+    }
+
     func complete(id: String, result: Result<URL, Error>, source: Transfer = .stream) {
-        guard let index = jobs.firstIndex(where: { $0.id == id }), !jobs[index].isFinished else { return }
+        guard let index = jobs.firstIndex(where: { $0.id == id }), !jobs[index].isFinished else {
+            if case .success = result { removeTransferFile(id) }
+            return
+        }
         if source == .download { downloads.remove(id) }
         if case .failure(let error) = result {
             if source == .stream { tasks[id] = nil }
@@ -236,6 +245,7 @@ final class PrintJobManager: ObservableObject {
                 let target = folder.appendingPathComponent(fileName).appendingPathExtension("stl")
                 try Data(contentsOf: url).write(to: target, options: .atomic)
                 jobs[index].result = target
+                removeTransferFile(id)
             } catch { jobs[index].error = error.localizedDescription }
         case .failure(let error):
             jobs[index].error = error.localizedDescription
