@@ -1,0 +1,568 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		15A21CE618630EE491C5B685 /* ObjectScanView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 186B1783B50F7042BF77067E /* ObjectScanView.swift */; };
+		3395E5F040C5D595887BE822 /* LaunchArguments.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1327490574893FDE679AF73E /* LaunchArguments.swift */; };
+		38B584EEC9A7699DF06A1BA3 /* HomeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DF61EF62F44AF9D1CC4DAEB5 /* HomeView.swift */; };
+		5F97E84126558BAE031049BB /* ScansListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A3E8DCDB974B375AADE89EB2 /* ScansListView.swift */; };
+		683D19C30B97ACFEF138D529 /* LidarScannerApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 943C6B93CDBEF4C325CA7E88 /* LidarScannerApp.swift */; };
+		6A57E1C78638338120EDC3CD /* ScanStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 87F0A168FB8895BC010B38B4 /* ScanStoreTests.swift */; };
+		6F17BE26927A05A6DA0E0B4F /* LidarScannerUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CD0AB86940F3D7F42A85C0A6 /* LidarScannerUITests.swift */; };
+		7205225AFA1B5179CFF21200 /* DeviceSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8BFDFCA721B0D943DB447DC /* DeviceSupport.swift */; };
+		F5E1F4B69A346854F7F23658 /* RoomScanView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2BE16B613004BEB3D632B32 /* RoomScanView.swift */; };
+		F8AC652EAB45CEE69EF26635 /* ScanStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5AEE1F5D3FC4825BDA978F4C /* ScanStore.swift */; };
+		F9E7A58D2EA90D6622BC0111 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = C65E56EFF2ACDCAA2E4C04BA /* Assets.xcassets */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		92B3C2544C0F00EBFE9A6BCA /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 938B5742CAD3BC48A53AB88F /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = D270A6FB67432CB4A5BF6DFC;
+			remoteInfo = LidarScanner;
+		};
+		DAC31D67F3CF724BD5C9B365 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 938B5742CAD3BC48A53AB88F /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = D270A6FB67432CB4A5BF6DFC;
+			remoteInfo = LidarScanner;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXFileReference section */
+		07EE6C86D82B1C9CBE223D48 /* LidarScannerUITests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = LidarScannerUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		1327490574893FDE679AF73E /* LaunchArguments.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LaunchArguments.swift; sourceTree = "<group>"; };
+		186B1783B50F7042BF77067E /* ObjectScanView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ObjectScanView.swift; sourceTree = "<group>"; };
+		5AEE1F5D3FC4825BDA978F4C /* ScanStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScanStore.swift; sourceTree = "<group>"; };
+		87F0A168FB8895BC010B38B4 /* ScanStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScanStoreTests.swift; sourceTree = "<group>"; };
+		943C6B93CDBEF4C325CA7E88 /* LidarScannerApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LidarScannerApp.swift; sourceTree = "<group>"; };
+		9EEA2B6DD210C068DEE835B6 /* LidarScanner.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = LidarScanner.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		A3E8DCDB974B375AADE89EB2 /* ScansListView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScansListView.swift; sourceTree = "<group>"; };
+		B2BE16B613004BEB3D632B32 /* RoomScanView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RoomScanView.swift; sourceTree = "<group>"; };
+		B8BFDFCA721B0D943DB447DC /* DeviceSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceSupport.swift; sourceTree = "<group>"; };
+		C65E56EFF2ACDCAA2E4C04BA /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		C789F36D9041AF57FD69D61B /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+		CD0AB86940F3D7F42A85C0A6 /* LidarScannerUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LidarScannerUITests.swift; sourceTree = "<group>"; };
+		DF61EF62F44AF9D1CC4DAEB5 /* HomeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HomeView.swift; sourceTree = "<group>"; };
+		E5AD673B8AEF97F12628CA16 /* LidarScannerTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = LidarScannerTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+/* End PBXFileReference section */
+
+/* Begin PBXGroup section */
+		29BBE8ADBE3C51835D44897C /* LidarScannerUITests */ = {
+			isa = PBXGroup;
+			children = (
+				CD0AB86940F3D7F42A85C0A6 /* LidarScannerUITests.swift */,
+			);
+			path = LidarScannerUITests;
+			sourceTree = "<group>";
+		};
+		3AC6393B0E4041EA810A8E81 /* LidarScannerTests */ = {
+			isa = PBXGroup;
+			children = (
+				87F0A168FB8895BC010B38B4 /* ScanStoreTests.swift */,
+			);
+			path = LidarScannerTests;
+			sourceTree = "<group>";
+		};
+		53A3A7F677B2666A3E64090C /* Views */ = {
+			isa = PBXGroup;
+			children = (
+				DF61EF62F44AF9D1CC4DAEB5 /* HomeView.swift */,
+				186B1783B50F7042BF77067E /* ObjectScanView.swift */,
+				B2BE16B613004BEB3D632B32 /* RoomScanView.swift */,
+				A3E8DCDB974B375AADE89EB2 /* ScansListView.swift */,
+			);
+			path = Views;
+			sourceTree = "<group>";
+		};
+		6B587BA2A7929107CDCBFB84 /* Model */ = {
+			isa = PBXGroup;
+			children = (
+				B8BFDFCA721B0D943DB447DC /* DeviceSupport.swift */,
+				5AEE1F5D3FC4825BDA978F4C /* ScanStore.swift */,
+			);
+			path = Model;
+			sourceTree = "<group>";
+		};
+		A83FCD43E4D8A8D70A81484D /* LidarScanner */ = {
+			isa = PBXGroup;
+			children = (
+				C65E56EFF2ACDCAA2E4C04BA /* Assets.xcassets */,
+				C789F36D9041AF57FD69D61B /* Info.plist */,
+				D228220DA2F3EDB16B178134 /* App */,
+				6B587BA2A7929107CDCBFB84 /* Model */,
+				53A3A7F677B2666A3E64090C /* Views */,
+			);
+			path = LidarScanner;
+			sourceTree = "<group>";
+		};
+		B2CA60FB6253D773EBD3682C /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				9EEA2B6DD210C068DEE835B6 /* LidarScanner.app */,
+				E5AD673B8AEF97F12628CA16 /* LidarScannerTests.xctest */,
+				07EE6C86D82B1C9CBE223D48 /* LidarScannerUITests.xctest */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		D228220DA2F3EDB16B178134 /* App */ = {
+			isa = PBXGroup;
+			children = (
+				1327490574893FDE679AF73E /* LaunchArguments.swift */,
+				943C6B93CDBEF4C325CA7E88 /* LidarScannerApp.swift */,
+			);
+			path = App;
+			sourceTree = "<group>";
+		};
+		FF809289E29C5192CC1B3787 = {
+			isa = PBXGroup;
+			children = (
+				A83FCD43E4D8A8D70A81484D /* LidarScanner */,
+				3AC6393B0E4041EA810A8E81 /* LidarScannerTests */,
+				29BBE8ADBE3C51835D44897C /* LidarScannerUITests */,
+				B2CA60FB6253D773EBD3682C /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		A30004D4C1376702D71301A2 /* LidarScannerUITests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 948C2AD117237429D4BEE7B2 /* Build configuration list for PBXNativeTarget "LidarScannerUITests" */;
+			buildPhases = (
+				4CF207EDB51D01DA4C24451F /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				64635A12C0BA9759321BE3D5 /* PBXTargetDependency */,
+			);
+			name = LidarScannerUITests;
+			packageProductDependencies = (
+			);
+			productName = LidarScannerUITests;
+			productReference = 07EE6C86D82B1C9CBE223D48 /* LidarScannerUITests.xctest */;
+			productType = "com.apple.product-type.bundle.ui-testing";
+		};
+		D270A6FB67432CB4A5BF6DFC /* LidarScanner */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 727F98A05D545DC2AD5A1609 /* Build configuration list for PBXNativeTarget "LidarScanner" */;
+			buildPhases = (
+				17EC48D9B8FE7BBE49B0C0DA /* Sources */,
+				C718239D20FED43F5C23A9E2 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = LidarScanner;
+			packageProductDependencies = (
+			);
+			productName = LidarScanner;
+			productReference = 9EEA2B6DD210C068DEE835B6 /* LidarScanner.app */;
+			productType = "com.apple.product-type.application";
+		};
+		D8BDFDC0D9EC0F71DCF89971 /* LidarScannerTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 6FF3CDB5AF06E1A1E6D2C916 /* Build configuration list for PBXNativeTarget "LidarScannerTests" */;
+			buildPhases = (
+				AA885DC9E25ACAD124CE22B2 /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				FCF33CCE57E2767E0A15221D /* PBXTargetDependency */,
+			);
+			name = LidarScannerTests;
+			packageProductDependencies = (
+			);
+			productName = LidarScannerTests;
+			productReference = E5AD673B8AEF97F12628CA16 /* LidarScannerTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		938B5742CAD3BC48A53AB88F /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = YES;
+				LastUpgradeCheck = 1600;
+				TargetAttributes = {
+					A30004D4C1376702D71301A2 = {
+						DevelopmentTeam = "";
+						ProvisioningStyle = Automatic;
+						TestTargetID = D270A6FB67432CB4A5BF6DFC;
+					};
+					D270A6FB67432CB4A5BF6DFC = {
+						DevelopmentTeam = "";
+						ProvisioningStyle = Automatic;
+					};
+					D8BDFDC0D9EC0F71DCF89971 = {
+						DevelopmentTeam = "";
+						ProvisioningStyle = Automatic;
+					};
+				};
+			};
+			buildConfigurationList = 5C956347ABC8C63ACBC9DC68 /* Build configuration list for PBXProject "LidarScanner" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				Base,
+				en,
+			);
+			mainGroup = FF809289E29C5192CC1B3787;
+			minimizedProjectReferenceProxies = 1;
+			preferredProjectObjectVersion = 77;
+			productRefGroup = B2CA60FB6253D773EBD3682C /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				D270A6FB67432CB4A5BF6DFC /* LidarScanner */,
+				D8BDFDC0D9EC0F71DCF89971 /* LidarScannerTests */,
+				A30004D4C1376702D71301A2 /* LidarScannerUITests */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		C718239D20FED43F5C23A9E2 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				F9E7A58D2EA90D6622BC0111 /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		17EC48D9B8FE7BBE49B0C0DA /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				7205225AFA1B5179CFF21200 /* DeviceSupport.swift in Sources */,
+				38B584EEC9A7699DF06A1BA3 /* HomeView.swift in Sources */,
+				3395E5F040C5D595887BE822 /* LaunchArguments.swift in Sources */,
+				683D19C30B97ACFEF138D529 /* LidarScannerApp.swift in Sources */,
+				15A21CE618630EE491C5B685 /* ObjectScanView.swift in Sources */,
+				F5E1F4B69A346854F7F23658 /* RoomScanView.swift in Sources */,
+				F8AC652EAB45CEE69EF26635 /* ScanStore.swift in Sources */,
+				5F97E84126558BAE031049BB /* ScansListView.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		4CF207EDB51D01DA4C24451F /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				6F17BE26927A05A6DA0E0B4F /* LidarScannerUITests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		AA885DC9E25ACAD124CE22B2 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				6A57E1C78638338120EDC3CD /* ScanStoreTests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		64635A12C0BA9759321BE3D5 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = D270A6FB67432CB4A5BF6DFC /* LidarScanner */;
+			targetProxy = 92B3C2544C0F00EBFE9A6BCA /* PBXContainerItemProxy */;
+		};
+		FCF33CCE57E2767E0A15221D /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = D270A6FB67432CB4A5BF6DFC /* LidarScanner */;
+			targetProxy = DAC31D67F3CF724BD5C9B365 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		0BBD9F42E0EA5D1A2BAE3D11 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.lidarscanner.app.uitests;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_TARGET_NAME = LidarScanner;
+			};
+			name = Debug;
+		};
+		25E0CCA221221AC86AB727C4 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.lidarscanner.app.uitests;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_TARGET_NAME = LidarScanner;
+			};
+			name = Release;
+		};
+		40525EFAEA5B356E92391734 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				CODE_SIGN_STYLE = Automatic;
+				COPY_PHASE_STRIP = NO;
+				CURRENT_PROJECT_VERSION = 1;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				DEVELOPMENT_TEAM = "";
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"$(inherited)",
+					"DEBUG=1",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MARKETING_VERSION = 1.0.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		4A8BF89DAC8F9794AA25CD1B /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.lidarscanner.app.tests;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/LidarScanner.app/LidarScanner";
+			};
+			name = Release;
+		};
+		7D460D9FAF7397098A435B1D /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.lidarscanner.app.tests;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/LidarScanner.app/LidarScanner";
+			};
+			name = Debug;
+		};
+		CE7F88995FA5F1232F52A3E9 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = LidarScanner/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.lidarscanner.app;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		E023E802527D788BD49BC06C /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				CODE_SIGN_STYLE = Automatic;
+				COPY_PHASE_STRIP = NO;
+				CURRENT_PROJECT_VERSION = 1;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				DEVELOPMENT_TEAM = "";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MARKETING_VERSION = 1.0.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
+		E93EFCA80A61027B0CA041B1 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = LidarScanner/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.lidarscanner.app;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		5C956347ABC8C63ACBC9DC68 /* Build configuration list for PBXProject "LidarScanner" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				40525EFAEA5B356E92391734 /* Debug */,
+				E023E802527D788BD49BC06C /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		6FF3CDB5AF06E1A1E6D2C916 /* Build configuration list for PBXNativeTarget "LidarScannerTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				7D460D9FAF7397098A435B1D /* Debug */,
+				4A8BF89DAC8F9794AA25CD1B /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		727F98A05D545DC2AD5A1609 /* Build configuration list for PBXNativeTarget "LidarScanner" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				E93EFCA80A61027B0CA041B1 /* Debug */,
+				CE7F88995FA5F1232F52A3E9 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		948C2AD117237429D4BEE7B2 /* Build configuration list for PBXNativeTarget "LidarScannerUITests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				0BBD9F42E0EA5D1A2BAE3D11 /* Debug */,
+				25E0CCA221221AC86AB727C4 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = 938B5742CAD3BC48A53AB88F /* Project object */;
+}
