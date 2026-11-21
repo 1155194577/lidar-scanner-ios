@@ -33,10 +33,16 @@ jobs:
           for i in $(seq 1 20); do curl -sf http://127.0.0.1:8765/health && break; sleep 0.5; done
       - name: Unit and UI tests
         run: |
-          set -o pipefail
-          xcodebuild test -project LidarScanner.xcodeproj -scheme LidarScanner \
+          test_log="$RUNNER_TEMP/xcodebuild-test.log"
+          if xcodebuild test -project LidarScanner.xcodeproj -scheme LidarScanner \
             -destination "platform=iOS Simulator,id=$SIM_ID" \
-            -derivedDataPath build | tail -n 60
+            -derivedDataPath build > "$test_log" 2>&1; then
+            tail -n 60 "$test_log"
+          else
+            result=$?
+            cat "$test_log"
+            exit "$result"
+          fi
       - name: Device build (unsigned)
         run: |
           set -o pipefail
