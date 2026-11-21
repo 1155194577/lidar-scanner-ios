@@ -5,7 +5,6 @@ import SwiftUI
 /// Single-photo print: measure the object's height with LiDAR (tap its base, then its top), then send one photo plus the height to the print server.
 struct PhotoPrintView: View {
     @Environment(\.dismiss) private var dismiss
-    @EnvironmentObject private var printJobs: PrintJobManager
     @StateObject private var model = PhotoPrintModel(fake: LaunchArguments.contains(LaunchArguments.fakePhotoCapture))
 
     var body: some View {
@@ -30,6 +29,18 @@ struct PhotoPrintView: View {
                     controls
                 }
                 .padding()
+                if model.isPrinting {
+                    VStack(spacing: 16) {
+                        ProgressView().controlSize(.large)
+                        Text(model.progressText).font(.headline)
+                        Button("Cancel", role: .cancel) { model.cancelPrint() }
+                            .buttonStyle(.bordered)
+                    }
+                    .padding(24)
+                    .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16))
+                    .accessibilityElement(children: .contain)
+                    .accessibilityIdentifier("printProgress")
+                }
             }
             .navigationTitle("Photo Print")
             .navigationBarTitleDisplayMode(.inline)
@@ -39,8 +50,17 @@ struct PhotoPrintView: View {
                         .accessibilityIdentifier("closeButton")
                 }
             }
+            .sheet(item: $model.printedModel) { printed in
+                PrintResultView(model: printed)
+            }
+            .alert("Retake the photo?", isPresented: Binding(get: { model.photoIssues != nil }, set: { if !$0 { model.photoIssues = nil } })) {
+                Button("Retake", role: .cancel) { model.retake() }
+                Button("Print Anyway") { model.printAnyway() }
+            } message: {
+                Text((model.photoIssues ?? []).map(\.message).joined(separator: "\n"))
+            }
             .alert("Couldn't print photo", isPresented: Binding(get: { model.errorMessage != nil }, set: { if !$0 { model.errorMessage = nil } })) {
-                Button("Retry") { model.print(using: printJobs) }
+                Button("Retry") { model.print() }
                 Button("Dismiss", role: .cancel) {}
             } message: {
                 Text(model.errorMessage ?? "")
@@ -65,7 +85,7 @@ struct PhotoPrintView: View {
                     .controlSize(.large)
                     .disabled(model.isFake || model.base == nil)
                 Button {
-                    model.print(using: printJobs)
+                    model.print()
                 } label: {
                     Label("Take Photo & Print", systemImage: "printer")
                 }
@@ -81,18 +101,22 @@ struct PhotoPrintView: View {
 struct PrintedModel: Identifiable {
     let url: URL
     var sourceScanFileName: String? = nil
+    var sourceScan: ScanFile? = nil
+    var kind: ScanKind = .photo
     var id: URL { url }
 
     @MainActor
     func save(in store: ScanStore) throws {
-        if let fileName = sourceScanFileName {
+        if let scan = sourceScan {
+            try store.savePrintedSTL(url, for: scan)
+        } else if let fileName = sourceScanFileName {
             store.reload()
             guard let scan = store.scans.first(where: { $0.url.lastPathComponent == fileName && $0.kind != .photo }) else {
                 throw CocoaError(.fileNoSuchFile)
             }
             try store.savePrintedSTL(url, for: scan)
         } else {
-            try store.savePhotoPrint(url)
+            try store.savePrint(url, kind: kind)
         }
     }
 }
@@ -117,7 +141,7 @@ struct PrintResultView: View {
                             .foregroundStyle(.secondary)
                     } else {
                         Button(action: save) {
-                            Label(model.sourceScanFileName == nil ? "Save to My Scans" : "Save to Scan", systemImage: "square.and.arrow.down")
+                            Label(model.sourceScan == nil && model.sourceScanFileName == nil ? "Save to My Scans" : "Save to Scan", systemImage: "square.and.arrow.down")
                         }
                     }
                     Button {
@@ -163,10 +187,15 @@ final class PhotoPrintModel: ObservableObject {
     @Published private(set) var base: SIMD3<Float>?
     @Published private(set) var top: SIMD3<Float>?
     @Published var errorMessage: String?
+    /// What `/photo-check` flagged about the last shot; the user retakes or prints anyway.
+    @Published var photoIssues: [PhotoCheck.Issue]?
+    @Published private(set) var progressText = "Preparing STL for printing"
 
     let isFake: Bool
     weak var arView: ARView?
     private var markers: [AnchorEntity] = []
+    private var printTask: Task<Void, Never>?
+    private var flaggedShot: Shot?
 
     init(fake: Bool) {
         isFake = fake
@@ -212,21 +241,127 @@ final class PhotoPrintModel: ObservableObject {
         top = nil
     }
 
-    func print(using manager: PrintJobManager) {
-        guard let height = heightMM else { return }
-        guard let photo = capturePhoto() else {
+    func print() {
+        guard heightMM != nil else { return }
+        guard let shot = capture() else {
             errorMessage = "Couldn't take the photo. Try again."
             return
         }
-        manager.start(input: .photo(photo, heightMM: height), name: Self.fileName(), kind: "photo")
+        isPrinting = true
+        progressText = "Checking the photo"
+        printTask = Task {
+            // The check is advisory: if it fails or times out, print anyway.
+            let check = try? await PrintService().checkPhoto(shot.checkPhoto, pose: shot.checkPose)
+            if Task.isCancelled {
+                finishPrinting()
+                return
+            }
+            if let check, !check.ok, !check.issues.isEmpty {
+                flaggedShot = shot
+                photoIssues = check.issues
+                finishPrinting()
+                return
+            }
+            await upload(shot)
+        }
     }
 
-    private func capturePhoto() -> Data? {
-        if isFake { return Self.sampleImage.jpegData(compressionQuality: 0.9) }
-        guard let arView, let buffer = arView.session.currentFrame?.capturedImage else { return nil }
-        let image = CIImage(cvPixelBuffer: buffer).oriented(Self.photoOrientation(for: arView.window?.windowScene?.interfaceOrientation ?? .portrait))
-        return CIContext().jpegRepresentation(of: image, colorSpace: CGColorSpace(name: CGColorSpace.sRGB)!, options: [:])
+    func printAnyway() {
+        guard let shot = flaggedShot else { return }
+        flaggedShot = nil
+        photoIssues = nil
+        isPrinting = true
+        printTask = Task { await upload(shot) }
     }
+
+    func retake() {
+        flaggedShot = nil
+        photoIssues = nil
+    }
+
+    private func upload(_ shot: Shot) async {
+        guard let height = heightMM else {
+            finishPrinting()
+            return
+        }
+        progressText = "Preparing STL for printing"
+        do {
+            let url = try await PrintService().requestSTL(for: .photo(shot.photo, heightMM: height, pose: shot.pose, depth: shot.depth), name: Self.fileName())
+            try Task.checkCancellation()
+            printedModel = PrintedModel(url: url)
+        } catch is CancellationError {
+        } catch let error as URLError where error.code == .cancelled {
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+        finishPrinting()
+    }
+
+    private func finishPrinting() {
+        isPrinting = false
+        printTask = nil
+    }
+
+    func cancelPrint() {
+        printTask?.cancel()
+    }
+
+    struct Shot {
+        var photo: Data
+        var pose: CameraPose
+        var depth: DepthCapture?
+        /// Upright photo and its camera for `/photo-check`; the same as `photo` and `pose` when there is no depth.
+        var checkPhoto: Data
+        var checkPose: CameraPose
+    }
+
+    /// The current frame as a JPEG plus the camera pose and LiDAR depth. With depth the photo stays in sensor orientation
+    /// (the server rotates it by `image_orientation`); without it the photo is rotated upright.
+    private func capture() -> Shot? {
+        if isFake {
+            guard let photo = Self.sampleImage.jpegData(compressionQuality: 0.9) else { return nil }
+            let pose = Self.samplePose(pitchDegrees: Self.fakePitchDegrees)
+            return Shot(photo: photo, pose: pose, depth: Self.sampleDepth, checkPhoto: photo, checkPose: pose)
+        }
+        guard let arView, let frame = arView.session.currentFrame else { return nil }
+        let interface = arView.window?.windowScene?.interfaceOrientation ?? .portrait
+        let orientation = Self.photoOrientation(for: interface)
+        let depth = frame.depthCapture(objectPoints: [base, top].compactMap { $0 })
+        let sensorImage = CIImage(cvPixelBuffer: frame.capturedImage)
+        let context = CIContext()
+        let sRGB = CGColorSpace(name: CGColorSpace.sRGB)!
+        // ARKit's camera for the interface orientation, whose axes match the upright photo.
+        let uprightPose = CameraPose(cameraTransform: simd_inverse(frame.camera.viewMatrix(for: interface)).columnMajor, imageOrientation: .up)
+        guard let upright = context.jpegRepresentation(of: sensorImage.oriented(orientation), colorSpace: sRGB, options: [:]) else { return nil }
+        guard depth != nil else {
+            return Shot(photo: upright, pose: uprightPose, depth: nil, checkPhoto: upright, checkPose: uprightPose)
+        }
+        guard let photo = context.jpegRepresentation(of: sensorImage, colorSpace: sRGB, options: [:]) else { return nil }
+        let pose = CameraPose(cameraTransform: frame.camera.transform.columnMajor, imageOrientation: orientation)
+        return Shot(photo: photo, pose: pose, depth: depth, checkPhoto: upright, checkPose: uprightPose)
+    }
+
+    /// How far the simulator's fake camera looks down; UI tests set it with `-UITestFakePitch <degrees>`.
+    static var fakePitchDegrees: Double {
+        UserDefaults.standard.object(forKey: LaunchArguments.fakePitchKey) == nil ? 50 : UserDefaults.standard.double(forKey: LaunchArguments.fakePitchKey)
+    }
+
+    /// Stand-in pose for simulator UI tests: looking `pitchDegrees` down at the object.
+    static func samplePose(pitchDegrees: Double) -> CameraPose {
+        let pitch = Float(pitchDegrees * .pi / 180)
+        let c = cos(pitch), s = sin(pitch)
+        return CameraPose(cameraTransform: [1, 0, 0, 0, 0, c, -s, 0, 0, s, c, 0, 0, 0.3, 0.25, 1], imageOrientation: .up)
+    }
+
+    /// Stand-in depth for simulator UI tests: a flat surface 0.5 m away, matching the upright sample photo.
+    static let sampleDepth = DepthCapture(
+        depth: Array(repeating: 0.5, count: 48 * 64),
+        confidence: Array(repeating: 2, count: 48 * 64),
+        width: 48,
+        height: 64,
+        intrinsics: CameraIntrinsics(fx: 700, fy: 700, cx: 300, cy: 400, width: 600, height: 800),
+        objectPoints: [CGPoint(x: 300, y: 560), CGPoint(x: 300, y: 300)]
+    )
 
     /// The camera buffer is in the sensor's landscape-right orientation; rotate it to match what the user sees.
     nonisolated static func photoOrientation(for interface: UIInterfaceOrientation) -> CGImagePropertyOrientation {
@@ -251,6 +386,45 @@ final class PhotoPrintModel: ObservableObject {
         context.fill(CGRect(x: 0, y: 0, width: 600, height: 800))
         UIColor.systemTeal.setFill()
         context.cgContext.fillEllipse(in: CGRect(x: 200, y: 300, width: 200, height: 260))
+    }
+}
+
+private extension simd_float4x4 {
+    var columnMajor: [Float] {
+        [columns.0, columns.1, columns.2, columns.3].flatMap { [$0.x, $0.y, $0.z, $0.w] }
+    }
+}
+
+private extension ARFrame {
+    func depthCapture(objectPoints: [SIMD3<Float>]) -> DepthCapture? {
+        guard let sceneDepth = smoothedSceneDepth ?? sceneDepth, let depth = Self.values(Float32.self, of: sceneDepth.depthMap) else { return nil }
+        let k = camera.intrinsics
+        let width = camera.imageResolution.width, height = camera.imageResolution.height
+        // The measured world points projected into this frame, so they stay on the object if the phone moved since the taps.
+        // `.landscapeRight` is the sensor's native orientation, i.e. the unrotated photo's pixels.
+        let points = objectPoints.map { camera.projectPoint($0, orientation: .landscapeRight, viewportSize: camera.imageResolution) }
+        return DepthCapture(
+            depth: depth,
+            confidence: sceneDepth.confidenceMap.flatMap { Self.values(UInt8.self, of: $0) },
+            width: CVPixelBufferGetWidth(sceneDepth.depthMap),
+            height: CVPixelBufferGetHeight(sceneDepth.depthMap),
+            intrinsics: CameraIntrinsics(fx: Double(k[0][0]), fy: Double(k[1][1]), cx: Double(k[2][0]), cy: Double(k[2][1]), width: Int(width), height: Int(height)),
+            objectPoints: points
+        )
+    }
+
+    static func values<T>(_ type: T.Type, of buffer: CVPixelBuffer) -> [T]? {
+        CVPixelBufferLockBaseAddress(buffer, .readOnly)
+        defer { CVPixelBufferUnlockBaseAddress(buffer, .readOnly) }
+        guard let base = CVPixelBufferGetBaseAddress(buffer) else { return nil }
+        let width = CVPixelBufferGetWidth(buffer), height = CVPixelBufferGetHeight(buffer), rowBytes = CVPixelBufferGetBytesPerRow(buffer)
+        var out: [T] = []
+        out.reserveCapacity(width * height)
+        for row in 0..<height {
+            let pointer = (base + row * rowBytes).assumingMemoryBound(to: T.self)
+            out.append(contentsOf: UnsafeBufferPointer(start: pointer, count: width))
+        }
+        return out
     }
 }
 

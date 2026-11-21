@@ -30,8 +30,8 @@ Apps signed with a free Personal Team expire after 7 days; reconnect the phone a
 ## Using it
 
 - **Room Scan:** tap *Room Scan*, walk slowly around the room pointing the phone at walls, floor and furniture, tap **Done**, then **Save Scan**.
-- **Photo Print:** point the phone at an object, tap where it sits on the surface, then tap its top. The app measures the height with LiDAR; tap **Take Photo & Print** to send one photo plus that height to the print server, which builds the model from the photo and scales it to the measured height.
-- **Object Scan:** follow the five-step guide to choose a matte, textured object and set up even light and a contrasting surface. Tap **Start Scanning**, **Continue**, fit the box snugly, then **Start Capture**. Stay about 30–60 cm away and circle slowly for three passes: chest height, lower near object height, then a rigid object flipped onto its side or a high angle. Follow the live coaching; **How to scan** reopens the guide. Tap **Finish** after three passes for better coverage. The model builds on the phone in a few minutes; keep the app open and the phone plugged in. **Skip** bypasses the guide, not device requirements.
+- **Photo Print:** point the phone at an object, tap where it sits on the surface, then tap its top. The app measures the height with LiDAR; tap **Take Photo & Print** to send one photo, that frame's LiDAR depth map and camera intrinsics, and the height to the print server. The server builds the full shape from the photo and fits it to the LiDAR depth of the visible side for true size and pose. Before printing, the app asks the server to check the shot; if the phone points more than 30° down, the background is cluttered or the object is cut off, it shows why with **Retake** or **Print Anyway**. If the check fails or takes over 45 s, it prints straight away.
+- **Object Scan:** put the object on a plain surface with room to walk around it. Tap **Continue**, fit the box around the object, tap **Start Capture** and circle it slowly. When the pass completes, do **Another Pass** (e.g. with the object flipped) or **Finish**. The model is then built on the phone, which takes a few minutes.
 
 ## Printing a scan
 
@@ -45,42 +45,20 @@ Set the server and token in **Settings** (gear icon on the home screen). The def
 ```
 POST {server}/print   multipart/form-data, Authorization: Bearer <token>
   mesh=<scan .usdz, metres>          (or photo=<jpeg> + height_mm=<number>)
-Accept: application/x-ndjson, model/stl
-→ 200 application/x-ndjson (one JSON event per line), or legacy model/stl
-→ non-2xx pre-work errors: JSON {"detail"}
+  every photo also sends camera_transform=[16 floats, column-major camera-to-world, +Y up,
+    camera x/y = the uploaded photo's pixel axes] and image_orientation (1 when already upright)
+  with LiDAR depth it also sends, from the same frame (photo left in sensor orientation):
+    depth=<float32 LE metres, row-major, NaN = no reading>  depth_width, depth_height
+    depth_confidence=<uint8 0/1/2>   image_orientation=<EXIF 1|3|6|8>
+    intrinsics={"fx","fy","cx","cy","width","height"} (photo pixels)
+    object_points=[[u,v] base, [u,v] top] (measured points projected into the photo, pixels)
+→ 200 model/stl  (X-Print-Report header); errors are JSON {"detail"}
+
+POST {server}/photo-check   before a Photo Print: photo=<upright jpeg> + camera_transform
+→ 200 {"ok", "issues": [{"code": steep_angle|cluttered_background|cut_off, "message"}], "camera_pitch_deg", ...}
 ```
 
-The progress bar first shows the real upload fraction, then the server's stage message and
-percentage (or a spinner when the fraction is unknown). Server stages are strings, such as
-upload, background removal, TripoSR, depth fusion, repair and export. Progress events have
-`{"type":"progress","stage":"repair","message":"Repairing mesh","progress":0.7}`
-(`progress` may be null). The terminal event is either
-`{"type":"done","filename":"x.stl","report":{},"stl_base64":"..."}` or
-`{"type":"error","detail":"reason"}`. Unknown event types/fields are ignored.
-The server should send a line at least every 2 seconds. A stream ending without a terminal
-event, or 10 seconds without a line after streaming begins, reconnects up to twice before
-showing the failure detail with Retry/Dismiss actions. Each stream's overall timeout remains
-600 seconds. Old servers returning
-`model/stl` still work, with upload progress followed by a wait for the response.
-
-Each POST includes a client-generated `job_id` UUID. The server acknowledges with
-`{"type":"accepted","job_id":"..."}` and keeps working if the connection drops.
-Reposting the same id joins that job. `GET /print/{id}` with the same Bearer token and
-`Accept: application/x-ndjson` replays current progress and streams to the same terminal
-event. `GET /print/{id}/result` waits until completion and returns `model/stl` (redirects
-are followed), or non-2xx JSON `{"detail"}`; unknown/expired jobs return 404. Jobs are
-retained by the server for 24 hours. There is no `Prefer: respond-async` or `/jobs` route.
-
-The app saves job ids/names/kinds/server URLs and finished results across launches. When
-backgrounded after acceptance, it starts an iOS background-session download of the result;
-iOS can wake the app to save it and post a local notification (permission is requested at
-the first print). Foregrounding/relaunching restores jobs and reconnects streams. Stream
-and background-download completions are deduplicated. iOS grants only limited background
-time to finish the initial upload: wait for server acceptance before leaving on a slow
-connection. Force-quitting the app can cancel iOS background transfers; reopen it to
-reattach. Notification delivery requires permission. Retry after a server failure creates
-a fresh job while reconnect retries reuse the id. Original photo/mesh inputs are kept only
-in memory: after relaunch Retry reconnects the saved job; resubmit if it has expired.
+A cold start of the live server can take about 4 minutes, so the first print can be slow; the app waits up to 10 minutes per request.
 
 For offline development, run the stub, which answers every valid request with a 20 mm cube:
 

@@ -58,6 +58,82 @@ final class PrintServiceTests: XCTestCase {
         XCTAssertFalse(body.contains("name=\"mesh\""))
     }
 
+    func testPhotoWithDepthSendsFusionFields() throws {
+        let depth = DepthCapture(
+            depth: [0.5, .nan],
+            confidence: [2, 0],
+            width: 2,
+            height: 1,
+            intrinsics: CameraIntrinsics(fx: 1400, fy: 1400, cx: 960, cy: 720, width: 1920, height: 1440),
+            objectPoints: [CGPoint(x: 960.04, y: 1000), CGPoint(x: 955.5, y: 400)]
+        )
+        let pose = CameraPose(cameraTransform: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0.1, 1.2, -0.3, 1], imageOrientation: .right)
+        let request = try PrintService(baseURL: "http://localhost:8765")
+            .makeRequest(for: .photo(Data("jpeg".utf8), heightMM: 120, pose: pose, depth: depth), boundary: "B")
+        let body = try XCTUnwrap(request.httpBody)
+        let text = String(decoding: body, as: UTF8.self)
+
+        var floats = Data()
+        for value: Float32 in [0.5, .nan] { withUnsafeBytes(of: value.bitPattern.littleEndian) { floats.append(contentsOf: $0) } }
+        XCTAssertNotNil(body.range(of: Data("name=\"depth\"; filename=\"depth.f32\"\r\nContent-Type: application/octet-stream\r\n\r\n".utf8) + floats + Data("\r\n".utf8)))
+        XCTAssertNotNil(body.range(of: Data("filename=\"confidence.u8\"\r\nContent-Type: application/octet-stream\r\n\r\n".utf8) + Data([2, 0, 13, 10])))
+        XCTAssertTrue(text.contains("name=\"depth_width\"\r\n\r\n2\r\n"))
+        XCTAssertTrue(text.contains("name=\"depth_height\"\r\n\r\n1\r\n"))
+        XCTAssertTrue(text.contains("name=\"image_orientation\"\r\n\r\n6\r\n"))
+        XCTAssertTrue(text.contains("name=\"intrinsics\"\r\n\r\n{\"cx\":960,\"cy\":720,\"fx\":1400,\"fy\":1400,\"height\":1440,\"width\":1920}\r\n"))
+        XCTAssertTrue(text.contains("name=\"camera_transform\"\r\n\r\n[1,0,0,0,0,1,0,0,0,0,1,0,0.1"))
+        XCTAssertTrue(text.contains("name=\"object_points\"\r\n\r\n[[960,1000],[955.5,400]]\r\n"))
+        XCTAssertTrue(text.contains("name=\"height_mm\"\r\n\r\n120.0\r\n"))
+    }
+
+    func testPhotoWithoutDepthStillSendsPose() throws {
+        let pose = CameraPose(cameraTransform: [1, 0, 0, 0, 0, 0.5, -0.5, 0, 0, 0.5, 0.5, 0, 0, 1, 0, 1], imageOrientation: .up)
+        let request = try PrintService(baseURL: "http://localhost:8765")
+            .makeRequest(for: .photo(Data("jpeg".utf8), heightMM: 80, pose: pose), boundary: "B")
+        let text = String(decoding: try XCTUnwrap(request.httpBody), as: UTF8.self)
+        XCTAssertTrue(text.contains("name=\"image_orientation\"\r\n\r\n1\r\n"))
+        XCTAssertTrue(text.contains("name=\"camera_transform\"\r\n\r\n[1,0,0,0,0,0.5,-0.5,0,0,0.5,0.5,0,0,1,0,1]\r\n"))
+        XCTAssertFalse(text.contains("name=\"depth\""))
+    }
+
+    func testPhotoCheckRequestSendsPhotoAndPose() throws {
+        let pose = CameraPose(cameraTransform: [1, 0, 0, 0, 0, 0.6428, -0.766, 0, 0, 0.766, 0.6428, 0, 0, 0.3, 0.25, 1], imageOrientation: .up)
+        let request = try PrintService(baseURL: "http://localhost:8765", token: "t")
+            .makePhotoCheckRequest(photo: Data("jpeg".utf8), pose: pose, boundary: "B")
+        XCTAssertEqual(request.url?.absoluteString, "http://localhost:8765/photo-check")
+        XCTAssertEqual(request.timeoutInterval, PrintService.photoCheckTimeout)
+        XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer t")
+        let body = String(decoding: try XCTUnwrap(request.httpBody), as: UTF8.self)
+        XCTAssertTrue(body.contains("name=\"photo\"; filename=\"photo.jpg\"\r\nContent-Type: image/jpeg\r\n\r\njpeg\r\n"))
+        XCTAssertTrue(body.contains("name=\"camera_transform\"\r\n\r\n[1,0,0,0,0,0.6428,-0.766,0,0,0.766,0.6428,0,0,0.3,0.25,1]\r\n"))
+        XCTAssertFalse(body.contains("name=\"height_mm\""))
+    }
+
+    func testPhotoCheckReadsIssues() async throws {
+        StubProtocol.handler = { request in
+            XCTAssertEqual(request.url?.path, "/photo-check")
+            let json = #"{"ok": false, "issues": [{"code": "steep_angle", "message": "Too steep"}, {"code": "cut_off", "message": "Cut off"}], "camera_pitch_deg": 50.0, "angle_checked": true, "max_pitch_deg": 30.0, "model": "x"}"#
+            return (200, "application/json", Data(json.utf8))
+        }
+
+        let check = try await service().checkPhoto(Data("jpeg".utf8), pose: nil)
+
+        XCTAssertFalse(check.ok)
+        XCTAssertEqual(check.issues.map(\.code), ["steep_angle", "cut_off"])
+        XCTAssertEqual(check.issues.first?.message, "Too steep")
+        XCTAssertEqual(check.cameraPitchDeg, 50)
+    }
+
+    func testPhotoCheckErrorThrows() async throws {
+        StubProtocol.handler = { _ in (404, "application/json", Data(#"{"detail": "Not Found"}"#.utf8)) }
+        do {
+            _ = try await service().checkPhoto(Data("jpeg".utf8), pose: nil)
+            XCTFail("expected an error")
+        } catch let error as PrintError {
+            XCTAssertEqual(error, .server(status: 404, message: "Not Found"))
+        }
+    }
+
     func testSavesReturnedSTL() async throws {
         let mesh = directory.appendingPathComponent("Object 1.usdz")
         try Data("usdz".utf8).write(to: mesh)

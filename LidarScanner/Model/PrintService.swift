@@ -1,17 +1,22 @@
 import Foundation
 
-struct PrintProgress: Equatable, Codable {
-    let stage: String
-    let message: String
-    let progress: Double?
-
-    static let uploading = PrintProgress(stage: "uploading", message: "Uploading to print server", progress: 0)
-}
-
-/// What gets sent to the print endpoint: a scan's mesh, or a single photo plus the LiDAR-measured object height.
+/// What gets sent to the print endpoint: a scan's mesh, a single photo plus the LiDAR-measured object height, or a TrueDepth face for a bust.
 enum PrintInput {
     case mesh(URL)
-    case photo(Data, heightMM: Double)
+    case photo(Data, heightMM: Double, pose: CameraPose? = nil, depth: DepthCapture? = nil)
+}
+
+/// `/photo-check`'s verdict on a Photo Print shot, from the phone's pitch plus a vision model.
+struct PhotoCheck: Decodable, Equatable {
+    struct Issue: Decodable, Equatable {
+        /// `steep_angle`, `cluttered_background` or `cut_off`.
+        let code: String
+        let message: String
+    }
+
+    let ok: Bool
+    let issues: [Issue]
+    let cameraPitchDeg: Double?
 }
 
 enum PrintError: LocalizedError, Equatable {
@@ -65,6 +70,7 @@ struct PrintService {
     }
 
     let endpoint: URL
+    let checkEndpoint: URL
     private let token: String?
     private let session: URLSession
     private let stallTimeout: TimeInterval
@@ -76,6 +82,7 @@ struct PrintService {
             throw PrintError.invalidBaseURL(baseURL)
         }
         endpoint = url.appendingPathComponent("print")
+        checkEndpoint = url.appendingPathComponent("photo-check")
         self.token = token
         self.session = session
         self.stallTimeout = stallTimeout
@@ -87,18 +94,52 @@ struct PrintService {
         switch input {
         case .mesh(let url):
             form.addFile(name: "mesh", fileName: url.lastPathComponent, contentType: Self.contentType(for: url), data: try Data(contentsOf: url))
-        case .photo(let data, let heightMM):
+        case .photo(let data, let heightMM, let pose, let depth):
             form.addFile(name: "photo", fileName: "photo.jpg", contentType: "image/jpeg", data: data)
             form.addField(name: "height_mm", value: String(format: "%.1f", locale: Locale(identifier: "en_US_POSIX"), heightMM))
+            if let pose {
+                form.addField(name: "image_orientation", value: String(pose.imageOrientation.rawValue))
+                form.addField(name: "camera_transform", value: String(decoding: try JSONEncoder().encode(pose.cameraTransform), as: UTF8.self))
+            }
+            if let depth {
+                try Self.addDepth(depth, to: &form)
+            }
         }
 
-        var request = URLRequest(url: endpoint, timeoutInterval: 600)
+        return post(form, to: endpoint, accept: "model/stl", timeout: 600)
+    }
+
+    func makePhotoCheckRequest(photo: Data, pose: CameraPose?, boundary: String = "Boundary-\(UUID().uuidString)") throws -> URLRequest {
+        var form = MultipartForm(boundary: boundary)
+        form.addFile(name: "photo", fileName: "photo.jpg", contentType: "image/jpeg", data: photo)
+        if let pose {
+            form.addField(name: "camera_transform", value: String(decoding: try JSONEncoder().encode(pose.cameraTransform), as: UTF8.self))
+        }
+        return post(form, to: checkEndpoint, accept: "application/json", timeout: Self.photoCheckTimeout)
+    }
+
+    /// Asks `/photo-check` whether the shot needs a retake (steep angle, clutter, object cut off).
+    func checkPhoto(_ photo: Data, pose: CameraPose?) async throws -> PhotoCheck {
+        let (data, response) = try await session.data(for: try makePhotoCheckRequest(photo: photo, pose: pose))
+        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+            throw PrintError.server(status: (response as? HTTPURLResponse)?.statusCode ?? 0, message: Self.errorMessage(from: data))
+        }
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        return try decoder.decode(PhotoCheck.self, from: data)
+    }
+
+    static let photoCheckTimeout: TimeInterval = 45
+
+    private func post(_ form: MultipartForm, to url: URL, accept: String, timeout: TimeInterval) -> URLRequest {
+        var request = URLRequest(url: url, timeoutInterval: timeout)
         request.httpMethod = "POST"
-        request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
-        request.setValue("application/x-ndjson, model/stl", forHTTPHeaderField: "Accept")
+        request.setValue("multipart/form-data; boundary=\(form.boundary)", forHTTPHeaderField: "Content-Type")
+        request.setValue(accept, forHTTPHeaderField: "Accept")
         if let token {
             request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         }
+        var form = form
         request.httpBody = form.finalized()
         return request
     }
@@ -143,6 +184,22 @@ struct PrintService {
         return url
     }
 
+    /// Photo + depth fusion fields: `depth` (float32 LE metres), `depth_confidence` (uint8), `depth_width`, `depth_height`,
+    /// `intrinsics` (photo pixels) and `object_points` ([[u, v]] photo pixels).
+    private static func addDepth(_ depth: DepthCapture, to form: inout MultipartForm) throws {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = .sortedKeys
+        form.addFile(name: "depth", fileName: "depth.f32", contentType: "application/octet-stream", data: depth.depthData)
+        if let confidence = depth.confidence {
+            form.addFile(name: "depth_confidence", fileName: "confidence.u8", contentType: "application/octet-stream", data: Data(confidence))
+        }
+        form.addField(name: "depth_width", value: String(depth.width))
+        form.addField(name: "depth_height", value: String(depth.height))
+        form.addField(name: "intrinsics", value: String(decoding: try encoder.encode(depth.intrinsics), as: UTF8.self))
+        let points = depth.objectPoints.map { [($0.x * 10).rounded() / 10, ($0.y * 10).rounded() / 10] }
+        form.addField(name: "object_points", value: String(decoding: try encoder.encode(points), as: UTF8.self))
+    }
+
     /// The `detail` of a JSON error body (a string, or a list of `{"msg"}` validation errors), else the body as text.
     static func errorMessage(from data: Data) -> String {
         if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
@@ -177,154 +234,7 @@ struct PrintService {
     }
 }
 
-private final class PrintTransfer: NSObject, URLSessionDataDelegate, @unchecked Sendable {
-    private let queue = DispatchQueue(label: "PrintTransfer")
-    private let configuration: URLSessionConfiguration
-    private let stallTimeout: TimeInterval
-    private let onProgress: @Sendable (PrintProgress) -> Void
-    private let onAccepted: @Sendable (String) -> Void
-    private var session: URLSession?
-    private var continuation: CheckedContinuation<Data, Error>?
-    private var response: HTTPURLResponse?
-    private var buffer = Data()
-    private var watchdog: DispatchWorkItem?
-    private var deadline: DispatchWorkItem?
-    private var cancelled = false
-
-    init(configuration: URLSessionConfiguration, stallTimeout: TimeInterval, onProgress: @escaping @Sendable (PrintProgress) -> Void, onAccepted: @escaping @Sendable (String) -> Void) {
-        self.configuration = configuration
-        self.stallTimeout = stallTimeout
-        self.onProgress = onProgress
-        self.onAccepted = onAccepted
-    }
-
-    func run(_ request: URLRequest) async throws -> Data {
-        try await withCheckedThrowingContinuation { continuation in
-            queue.async {
-                self.continuation = continuation
-                if self.cancelled { self.finish(.failure(CancellationError())); return }
-                let delegateQueue = OperationQueue()
-                delegateQueue.maxConcurrentOperationCount = 1
-                delegateQueue.underlyingQueue = self.queue
-                self.session = URLSession(configuration: self.configuration, delegate: self, delegateQueue: delegateQueue)
-                let deadline = DispatchWorkItem { self.finish(.failure(URLError(.timedOut))) }
-                self.deadline = deadline
-                self.queue.asyncAfter(deadline: .now() + 600, execute: deadline)
-                self.onProgress(.uploading)
-                self.session?.dataTask(with: request).resume()
-            }
-        }
-    }
-
-    func cancel() {
-        queue.async {
-            self.cancelled = true
-            self.finish(.failure(CancellationError()))
-        }
-    }
-
-    private var streaming: Bool {
-        response?.mimeType?.lowercased() == "application/x-ndjson" && (200..<300).contains(response?.statusCode ?? 0)
-    }
-
-    private func resetWatchdog() {
-        watchdog?.cancel()
-        let work = DispatchWorkItem {
-            self.finish(.failure(PrintError.lostContact))
-        }
-        watchdog = work
-        queue.asyncAfter(deadline: .now() + stallTimeout, execute: work)
-    }
-
-    private func finish(_ result: Result<Data, Error>) {
-        guard let continuation else { return }
-        self.continuation = nil
-        watchdog?.cancel()
-        deadline?.cancel()
-        watchdog = nil
-        deadline = nil
-        session?.invalidateAndCancel()
-        session = nil
-        continuation.resume(with: result)
-    }
-
-    func urlSession(_ session: URLSession, task: URLSessionTask, didSendBodyData bytesSent: Int64, totalBytesSent: Int64, totalBytesExpectedToSend: Int64) {
-        guard continuation != nil, response == nil, totalBytesExpectedToSend > 0 else { return }
-        onProgress(PrintProgress(stage: "uploading", message: "Uploading to print server", progress: min(1, Double(totalBytesSent) / Double(totalBytesExpectedToSend))))
-        if totalBytesSent >= totalBytesExpectedToSend {
-            onProgress(PrintProgress(stage: "waiting", message: "Waiting for print server", progress: nil))
-        }
-    }
-
-    func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive response: URLResponse, completionHandler: @escaping (URLSession.ResponseDisposition) -> Void) {
-        self.response = response as? HTTPURLResponse
-        if streaming { resetWatchdog() } else { watchdog?.cancel() }
-        completionHandler(.allow)
-    }
-
-    func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
-        guard continuation != nil else { return }
-        buffer.append(data)
-        guard streaming else { return }
-        if !data.isEmpty { resetWatchdog() }
-        while let newline = buffer.firstIndex(of: 10), continuation != nil {
-            let line = Data(buffer[..<newline])
-            buffer.removeSubrange(...newline)
-            if !line.isEmpty { parse(line) }
-        }
-    }
-
-    private struct Event: Decodable {
-        let type: String
-        let stage: String?
-        let message: String?
-        let progress: Double?
-        let detail: String?
-        let stl_base64: String?
-        let job_id: String?
-    }
-
-    private func parse(_ line: Data) {
-        do {
-            struct Envelope: Decodable { let type: String }
-            let type = try JSONDecoder().decode(Envelope.self, from: line).type
-            guard ["accepted", "progress", "error", "done"].contains(type) else { return }
-            let event = try JSONDecoder().decode(Event.self, from: line)
-            switch event.type {
-            case "accepted":
-                if let id = event.job_id, !id.isEmpty { onAccepted(id) }
-            case "progress":
-                onProgress(PrintProgress(stage: event.stage ?? "", message: event.message ?? event.stage ?? "Processing", progress: event.progress.map { min(1, max(0, $0)) }))
-            case "error":
-                finish(.failure(PrintError.jobFailed(event.detail ?? "Printing failed")))
-            case "done":
-                guard let encoded = event.stl_base64, let data = Data(base64Encoded: encoded), !data.isEmpty else {
-                    throw PrintError.unexpectedResponse("missing or invalid STL data")
-                }
-                finish(.success(data))
-            default: break
-            }
-        } catch { finish(.failure(error)) }
-    }
-
-    func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
-        guard continuation != nil else { return }
-        if let error { finish(.failure(error)); return }
-        guard let response else { finish(.failure(PrintError.unexpectedResponse("no HTTP response"))); return }
-        if !(200..<300).contains(response.statusCode) {
-            finish(.failure(PrintError.server(status: response.statusCode, message: PrintService.errorMessage(from: buffer))))
-        } else if streaming {
-            if !buffer.isEmpty { parse(buffer) }
-            finish(.failure(PrintError.unexpectedResponse("stream ended without a terminal event")))
-        } else if !["model/stl", "application/sla", "application/vnd.ms-pki.stl", "application/octet-stream"].contains(response.mimeType?.lowercased() ?? "") {
-            finish(.failure(PrintError.unexpectedResponse(response.mimeType ?? "no content type")))
-        } else if buffer.isEmpty {
-            finish(.failure(PrintError.unexpectedResponse("empty body")))
-        } else { finish(.success(buffer)) }
-    }
-}
-
-private struct MultipartForm {
+struct MultipartForm {
     let boundary: String
     private var body = Data()
 

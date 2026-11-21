@@ -16,7 +16,7 @@ struct ScansListView: View {
                 ContentUnavailableView(
                     "No Scans Yet",
                     systemImage: "cube.transparent",
-                    description: Text("Room scans, object scans, and photo prints you save appear here.")
+                    description: Text("Room scans, object scans, and photo and face prints you save appear here.")
                 )
                 .accessibilityIdentifier("emptyScans")
             } else {
@@ -24,7 +24,7 @@ struct ScansListView: View {
                     ForEach(ScanKind.allCases) { kind in
                         let scans = store.scans(of: kind)
                         if !scans.isEmpty {
-                            Section(kind == .photo ? "Photo Prints" : "\(kind.rawValue) Scans") {
+                            Section(kind.isStandalonePrint ? "\(kind.rawValue)s" : "\(kind.rawValue) Scans") {
                                 ForEach(scans) { scan in
                                     row(for: scan)
                                 }
@@ -88,7 +88,7 @@ struct ScansListView: View {
             .buttonStyle(.plain)
             .accessibilityIdentifier("scan-\(scan.name)")
 
-            if scan.kind != .photo {
+            if !scan.kind.isStandalonePrint {
                 Button {
                     startPrint(scan)
                 } label: {
@@ -160,7 +160,7 @@ private struct ScanDetailView: View {
 
     var body: some View {
         List {
-            if scan.kind != .photo {
+            if !scan.kind.isStandalonePrint {
                 Section("Source Scan") {
                     Button {
                         previewURL = scan.url
