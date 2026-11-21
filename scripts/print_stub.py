@@ -302,16 +302,26 @@ class Handler(BaseHTTPRequestHandler):
             length = int(self.headers.get("Content-Length", ""))
         except ValueError:
             return self.error(411, "Content-Length required")
-        body = self.rfile.read(length)
+        if not 0 <= length <= MAX_UPLOAD_BYTES:
+            self.close_connection = True
+            return self.reply(413, "application/xml", b"<Error><Code>EntityTooLarge</Code></Error>")
+        refusal = None
         if slot is None or query.get("sig") != slot["sig"] or self.headers.get("Authorization"):
-            return self.s3_error(uploads, "SignatureDoesNotMatch", "The request signature we calculated does not match the signature you provided.")
-        if time.time() > float(query.get("expires", "0")):
-            return self.s3_error(uploads, "AccessDenied", "Request has expired")
-        for header, value in slot["headers"].items():
-            if self.headers.get(header) != value:
-                return self.s3_error(uploads, "SignatureDoesNotMatch", "%s must be %s" % (header, value))
-        if len(body) != slot["size"]:
+            refusal = ("SignatureDoesNotMatch", "The request signature we calculated does not match the signature you provided.")
+        elif time.time() > slot["expires"]:
+            refusal = ("AccessDenied", "Request has expired")
+        else:
+            for header, value in slot["headers"].items():
+                if self.headers.get(header) != value:
+                    refusal = ("SignatureDoesNotMatch", "%s must be %s" % (header, value))
+        if refusal or length != slot["size"]:
+            # Discard the body without buffering it, so the client still reads the error.
+            while length > 0:
+                length -= len(self.rfile.read(min(length, 65536)) or b"x" * length)
+            if refusal:
+                return self.s3_error(uploads, *refusal)
             return self.reply(400, "application/xml", b"<Error><Code>IncompleteBody</Code><Message>size differs from the declared size</Message></Error>")
+        body = self.rfile.read(length)
         with self.jobs_lock:
             uploads.files[name] = (slot["content_type"], body)
             uploads.stats["puts"] += 1
@@ -348,7 +358,7 @@ class Handler(BaseHTTPRequestHandler):
                     return self.error(422, "%s needs content_type and a size up to %d bytes" % (name, MAX_UPLOAD_BYTES))
                 expired = "expire" in modes and name not in uploads.slots
                 expires = time.time() + (-1 if expired else UPLOAD_EXPIRES)
-                slot = {"sig": uuid.uuid4().hex, "content_type": content_type, "size": size,
+                slot = {"sig": uuid.uuid4().hex, "expires": expires, "content_type": content_type, "size": size,
                         "headers": {"Content-Type": content_type, "x-amz-server-side-encryption": "AES256"}}
                 uploads.slots[name] = slot
                 response[name] = {"url": "http://%s/s3/%s/%s?expires=%d&sig=%s" % (host, job_id, name, expires, slot["sig"]),
