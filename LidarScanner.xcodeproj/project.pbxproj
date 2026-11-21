@@ -38,6 +38,7 @@
 		F5E1F4B69A346854F7F23658 /* RoomScanView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2BE16B613004BEB3D632B32 /* RoomScanView.swift */; };
 		F8AC652EAB45CEE69EF26635 /* ScanStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5AEE1F5D3FC4825BDA978F4C /* ScanStore.swift */; };
 		F9E7A58D2EA90D6622BC0111 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = C65E56EFF2ACDCAA2E4C04BA /* Assets.xcassets */; };
+		FEF4702053871E2ABD5B9934 /* DepthCapture.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6E46C9A1EB313C92BCA9EF56 /* DepthCapture.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -71,6 +72,7 @@
 		5AEE1F5D3FC4825BDA978F4C /* ScanStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScanStore.swift; sourceTree = "<group>"; };
 		5BA44A95E9C07A3E97B33581 /* ObjectScanCoaching.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ObjectScanCoaching.swift; sourceTree = "<group>"; };
 		5C087DF6219678C4951C8740 /* PhotoPrintTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhotoPrintTests.swift; sourceTree = "<group>"; };
+		6E46C9A1EB313C92BCA9EF56 /* DepthCapture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DepthCapture.swift; sourceTree = "<group>"; };
 		745B90CA011A00DEC61B996E /* ObjectScanCoachingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ObjectScanCoachingTests.swift; sourceTree = "<group>"; };
 		847C4A0C1369226AF4808EE4 /* SampleCube.usdz */ = {isa = PBXFileReference; lastKnownFileType = file.usdz; path = SampleCube.usdz; sourceTree = "<group>"; };
 		86C1D1E620A18A53EC63D7A0 /* PrintJobManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PrintJobManager.swift; sourceTree = "<group>"; };
@@ -136,6 +138,7 @@
 		6B587BA2A7929107CDCBFB84 /* Model */ = {
 			isa = PBXGroup;
 			children = (
+				6E46C9A1EB313C92BCA9EF56 /* DepthCapture.swift */,
 				B8BFDFCA721B0D943DB447DC /* DeviceSupport.swift */,
 				11D27955B848FD430FD3595F /* FaceCapture.swift */,
 				4ADE67AD7F6A66051B9B8B61 /* KeychainStore.swift */,
@@ -345,6 +348,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				8798B9B3B8ED9FD73CE5F592 /* ActivityView.swift in Sources */,
+				FEF4702053871E2ABD5B9934 /* DepthCapture.swift in Sources */,
 				7205225AFA1B5179CFF21200 /* DeviceSupport.swift in Sources */,
 				D3B4FB1A7F8BFC7B50DE026E /* FaceCapture.swift in Sources */,
 				91752881DAE2BCBA116E7E03 /* FaceScanView.swift in Sources */,

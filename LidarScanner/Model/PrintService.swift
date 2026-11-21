@@ -11,8 +11,20 @@ struct PrintProgress: Equatable, Codable {
 /// What gets sent to the print endpoint: a scan's mesh, a single photo plus the LiDAR-measured object height, or a TrueDepth face for a bust.
 enum PrintInput {
     case mesh(URL)
-    case photo(Data, heightMM: Double)
-    case face(FaceCapture)
+    case photo(Data, heightMM: Double, pose: CameraPose? = nil, depth: DepthCapture? = nil)
+}
+
+/// `/photo-check`'s verdict on a Photo Print shot, from the phone's pitch plus a vision model.
+struct PhotoCheck: Decodable, Equatable {
+    struct Issue: Decodable, Equatable {
+        /// `steep_angle`, `cluttered_background` or `cut_off`.
+        let code: String
+        let message: String
+    }
+
+    let ok: Bool
+    let issues: [Issue]
+    let cameraPitchDeg: Double?
 }
 
 enum PrintError: LocalizedError, Equatable {
@@ -66,6 +78,7 @@ struct PrintService {
     }
 
     let endpoint: URL
+    let checkEndpoint: URL
     private let token: String?
     private let session: URLSession
     private let stallTimeout: TimeInterval
@@ -77,6 +90,7 @@ struct PrintService {
             throw PrintError.invalidBaseURL(baseURL)
         }
         endpoint = url.appendingPathComponent("print")
+        checkEndpoint = url.appendingPathComponent("photo-check")
         self.token = token
         self.session = session
         self.stallTimeout = stallTimeout
@@ -88,20 +102,52 @@ struct PrintService {
         switch input {
         case .mesh(let url):
             form.addFile(name: "mesh", fileName: url.lastPathComponent, contentType: Self.contentType(for: url), data: try Data(contentsOf: url))
-        case .photo(let data, let heightMM):
+        case .photo(let data, let heightMM, let pose, let depth):
             form.addFile(name: "photo", fileName: "photo.jpg", contentType: "image/jpeg", data: data)
             form.addField(name: "height_mm", value: String(format: "%.1f", locale: Locale(identifier: "en_US_POSIX"), heightMM))
-        case .face(let capture):
-            try capture.addFields(to: &form)
+            if let pose {
+                form.addField(name: "image_orientation", value: String(pose.imageOrientation.rawValue))
+                form.addField(name: "camera_transform", value: String(decoding: try JSONEncoder().encode(pose.cameraTransform), as: UTF8.self))
+            }
+            if let depth {
+                try Self.addDepth(depth, to: &form)
+            }
         }
 
-        var request = URLRequest(url: endpoint, timeoutInterval: 600)
+        return post(form, to: endpoint, accept: "model/stl", timeout: 600)
+    }
+
+    func makePhotoCheckRequest(photo: Data, pose: CameraPose?, boundary: String = "Boundary-\(UUID().uuidString)") throws -> URLRequest {
+        var form = MultipartForm(boundary: boundary)
+        form.addFile(name: "photo", fileName: "photo.jpg", contentType: "image/jpeg", data: photo)
+        if let pose {
+            form.addField(name: "camera_transform", value: String(decoding: try JSONEncoder().encode(pose.cameraTransform), as: UTF8.self))
+        }
+        return post(form, to: checkEndpoint, accept: "application/json", timeout: Self.photoCheckTimeout)
+    }
+
+    /// Asks `/photo-check` whether the shot needs a retake (steep angle, clutter, object cut off).
+    func checkPhoto(_ photo: Data, pose: CameraPose?) async throws -> PhotoCheck {
+        let (data, response) = try await session.data(for: try makePhotoCheckRequest(photo: photo, pose: pose))
+        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+            throw PrintError.server(status: (response as? HTTPURLResponse)?.statusCode ?? 0, message: Self.errorMessage(from: data))
+        }
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        return try decoder.decode(PhotoCheck.self, from: data)
+    }
+
+    static let photoCheckTimeout: TimeInterval = 45
+
+    private func post(_ form: MultipartForm, to url: URL, accept: String, timeout: TimeInterval) -> URLRequest {
+        var request = URLRequest(url: url, timeoutInterval: timeout)
         request.httpMethod = "POST"
-        request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
-        request.setValue("application/x-ndjson, model/stl", forHTTPHeaderField: "Accept")
+        request.setValue("multipart/form-data; boundary=\(form.boundary)", forHTTPHeaderField: "Content-Type")
+        request.setValue(accept, forHTTPHeaderField: "Accept")
         if let token {
             request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         }
+        var form = form
         request.httpBody = form.finalized()
         return request
     }
@@ -144,6 +190,22 @@ struct PrintService {
         let url = directory.appendingPathComponent(name).appendingPathExtension("stl")
         try data.write(to: url, options: .atomic)
         return url
+    }
+
+    /// Photo + depth fusion fields: `depth` (float32 LE metres), `depth_confidence` (uint8), `depth_width`, `depth_height`,
+    /// `intrinsics` (photo pixels) and `object_points` ([[u, v]] photo pixels).
+    private static func addDepth(_ depth: DepthCapture, to form: inout MultipartForm) throws {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = .sortedKeys
+        form.addFile(name: "depth", fileName: "depth.f32", contentType: "application/octet-stream", data: depth.depthData)
+        if let confidence = depth.confidence {
+            form.addFile(name: "depth_confidence", fileName: "confidence.u8", contentType: "application/octet-stream", data: Data(confidence))
+        }
+        form.addField(name: "depth_width", value: String(depth.width))
+        form.addField(name: "depth_height", value: String(depth.height))
+        form.addField(name: "intrinsics", value: String(decoding: try encoder.encode(depth.intrinsics), as: UTF8.self))
+        let points = depth.objectPoints.map { [($0.x * 10).rounded() / 10, ($0.y * 10).rounded() / 10] }
+        form.addField(name: "object_points", value: String(decoding: try encoder.encode(points), as: UTF8.self))
     }
 
     /// The `detail` of a JSON error body (a string, or a list of `{"msg"}` validation errors), else the body as text.

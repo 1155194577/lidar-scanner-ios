@@ -6,13 +6,20 @@ Mirrors the live contract: POST /print takes multipart form data with either
 optional `height_mm`, or `mode=face` with a front-camera `photo`, `intrinsics`,
 `camera_transform`, `image_orientation`, optional `depth` (float32 metres) with
 `depth_width`/`depth_height`/`depth_intrinsics`/`depth_extrinsics`, `face_transform`,
-`face_vertices` (float32 xyz) with `face_vertex_count` and `height_mm`.
+`face_vertices` (float32 xyz) with `face_vertex_count` and `height_mm`. Photo + depth
+fusion adds `depth` (float32 metres), `depth_width`, `depth_height`, `intrinsics`,
+`image_orientation` and optional `depth_confidence`, `object_points`; any photo may
+carry `camera_transform` with `image_orientation`.
 Every print takes a client UUID `job_id`. NDJSON clients get accepted,
 progress and terminal events; GET /print/{id} replays progress, and
 GET /print/{id}/result long-polls an STL. Legacy clients get `model/stl` and an
 `X-Print-Report` JSON header. Errors are JSON `{"detail": ...}`. With --token,
-requests must carry `Authorization: Bearer <token>` or get a 401. GET /last returns a JSON summary of the
-last accepted print request, for UI tests.
+requests must carry `Authorization: Bearer <token>` or get a 401. GET /last returns a JSON summary
+of the last accepted print request, for UI tests.
+
+POST /photo-check takes `photo` plus optional `camera_transform` and answers
+`{ok, issues: [{code, message}], camera_pitch_deg, angle_checked, max_pitch_deg}`; like the
+live check it flags `steep_angle` when the camera looks more than 30 degrees below level.
 
     python3 scripts/print_stub.py            # listens on 0.0.0.0:8765
     python3 scripts/print_stub.py --port 9000 --delay 2 --token secret
@@ -22,6 +29,7 @@ import base64
 import email.parser
 import email.policy
 import json
+import math
 import time
 import threading
 import uuid
@@ -102,51 +110,60 @@ def parse_multipart(content_type, body):
     return parts
 
 
-def check_face(parts):
-    """Validates the `mode=face` fields and returns a summary of them."""
-    def text(name):
-        return parts[name][1].decode() if name in parts else None
+def check_pose(parts):
+    """Validates `image_orientation` and the optional `camera_transform`."""
+    try:
+        orientation = int(parts["image_orientation"][1].decode())
+        transform = json.loads(parts["camera_transform"][1].decode()) if "camera_transform" in parts else None
+    except (KeyError, TypeError, ValueError):
+        raise ValueError("image_orientation and camera_transform must be a number and JSON")
+    if orientation not in (1, 3, 6, 8):
+        raise ValueError("image_orientation must be 1, 3, 6 or 8")
+    if transform is not None and (not isinstance(transform, list) or len(transform) != 16):
+        raise ValueError("camera_transform must be 16 numbers")
+    return {"image_orientation": orientation, "camera_transform": transform}
 
-    def matrix(name, size=16):
-        value = json.loads(text(name)) if name in parts else None
-        if value is not None and (not isinstance(value, list) or len(value) != size):
-            raise ValueError("%s must be %d numbers" % (name, size))
-        return value
 
-    def intrinsics(name):
-        value = json.loads(text(name)) if name in parts else None
-        if value is not None and not (isinstance(value, dict) and all(k in value for k in ("fx", "fy", "cx", "cy", "width", "height"))):
-            raise ValueError("%s must have fx, fy, cx, cy, width and height" % name)
-        return value
+def check_depth(parts):
+    """Validates the photo + depth fields and returns a summary of them."""
+    def field(name, required=True):
+        if name not in parts:
+            if required:
+                raise ValueError("%s is required with depth" % name)
+            return None
+        return parts[name][1].decode()
 
     try:
-        summary = {
-            "mode": "face",
-            "image_orientation": int(text("image_orientation") or 1),
-            "intrinsics": intrinsics("intrinsics"),
-            "camera_transform": matrix("camera_transform"),
-            "face_transform": matrix("face_transform"),
-            "depth_intrinsics": intrinsics("depth_intrinsics"),
-            "depth_extrinsics": matrix("depth_extrinsics"),
-            "height_mm": float(text("height_mm") or 100),
-        }
-        if "depth" in parts:
-            width, height = int(text("depth_width")), int(text("depth_height"))
-            if width <= 0 or height <= 0 or len(parts["depth"][1]) != width * height * 4:
-                raise ValueError("depth must be depth_width x depth_height float32 values")
-            summary.update(depth_width=width, depth_height=height)
-        if "face_vertices" in parts:
-            count = int(text("face_vertex_count"))
-            if count <= 0 or len(parts["face_vertices"][1]) != count * 12:
-                raise ValueError("face_vertices must be face_vertex_count x 3 float32 values")
-            summary["face_vertex_count"] = count
-    except (TypeError, ValueError) as error:
-        raise ValueError(str(error) if str(error).startswith(("depth", "face", "camera", "intrinsics")) else "face fields must be numbers or JSON")
-    if summary["image_orientation"] not in (1, 3, 6, 8):
-        raise ValueError("image_orientation must be 1, 3, 6 or 8")
-    if summary["height_mm"] <= 0:
-        raise ValueError("height_mm must be a positive number")
-    return summary
+        width, height = int(field("depth_width")), int(field("depth_height"))
+        intrinsics = json.loads(field("intrinsics"))
+        points = json.loads(field("object_points", False) or "[]")
+    except (TypeError, ValueError):
+        raise ValueError("depth fields must be numbers or JSON")
+    if width <= 0 or height <= 0 or len(parts["depth"][1]) != width * height * 4:
+        raise ValueError("depth must be depth_width x depth_height float32 values")
+    if "depth_confidence" in parts and len(parts["depth_confidence"][1]) != width * height:
+        raise ValueError("depth_confidence must be depth_width x depth_height bytes")
+    if not isinstance(intrinsics, dict) or not all(k in intrinsics for k in ("fx", "fy", "cx", "cy", "width", "height")):
+        raise ValueError("intrinsics must have fx, fy, cx, cy, width and height")
+    return {
+        "depth_width": width, "depth_height": height, "intrinsics": intrinsics,
+        "object_points": points, "has_confidence": "depth_confidence" in parts,
+    }
+
+
+MAX_PITCH_DEG = 30.0
+
+
+def photo_check(parts):
+    """The live check's angle rule: pitch below level from the camera's forward (-Z) axis."""
+    if "camera_transform" not in parts:
+        return {"ok": True, "issues": [], "camera_pitch_deg": None, "angle_checked": False, "max_pitch_deg": MAX_PITCH_DEG}
+    transform = check_pose(dict(parts, image_orientation=(None, b"1")))["camera_transform"]
+    pitch = round(math.degrees(math.asin(max(-1.0, min(1.0, transform[9])))), 1)
+    issues = []
+    if pitch > MAX_PITCH_DEG:
+        issues.append({"code": "steep_angle", "message": "The phone is pointing %g° down. Hold it closer to level with the object (%g° at most)." % (pitch, MAX_PITCH_DEG)})
+    return {"ok": not issues, "issues": issues, "camera_pitch_deg": pitch, "angle_checked": True, "max_pitch_deg": MAX_PITCH_DEG}
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -192,7 +209,8 @@ class Handler(BaseHTTPRequestHandler):
         return True
 
     def do_POST(self):
-        if self.path.rstrip("/") not in ("/print", "/fail/print"):
+        path = self.path.rstrip("/")
+        if path not in ("/print", "/fail/print", "/photo-check"):
             return self.error(404, "not found")
         if not self.authorized():
             return
@@ -208,6 +226,16 @@ class Handler(BaseHTTPRequestHandler):
             return self.error(413, "upload larger than %d MB" % (MAX_UPLOAD_BYTES // (1024 * 1024)))
         body = self.rfile.read(length)
         parts = parse_multipart(content_type, body)
+
+        if path == "/photo-check":
+            if not parts.get("photo", (None, b""))[1]:
+                return self.error(400, "photo is required")
+            try:
+                result = photo_check(parts)
+            except ValueError as error:
+                return self.error(422, str(error))
+            self.log_message("photo check: %s", json.dumps(result))
+            return self.reply(200, "application/json", json.dumps(result).encode())
 
         if ("mesh" in parts) == ("photo" in parts):
             return self.error(400, "send exactly one of mesh or photo")
@@ -234,6 +262,18 @@ class Handler(BaseHTTPRequestHandler):
                 if height <= 0:
                     return self.error(422, "height_mm must be a positive number")
                 source += ", height %g mm" % height
+            summary = {}
+            if "camera_transform" in parts or "depth" in parts:
+                try:
+                    summary.update(check_pose(parts))
+                except ValueError as error:
+                    return self.error(422, str(error))
+            if "depth" in parts:
+                try:
+                    summary.update(check_depth(parts))
+                except ValueError as error:
+                    return self.error(422, str(error))
+                source += ", depth %(depth_width)dx%(depth_height)d" % summary
             stem = "photo"
             summary = {}
             if parts.get("mode", (None, b"object"))[1].decode() == "face":
@@ -249,6 +289,7 @@ class Handler(BaseHTTPRequestHandler):
         Handler.last_request = {"fields": sorted(parts), "source": source}
         if "photo" in parts:
             Handler.last_request.update(summary)
+
         self.log_message("print request: %s", source)
         report = {"extents_mm": [20.0, 20.0, 20.0], "watertight": True, "volume_cm3": 8.0}
         if "application/x-ndjson" in self.headers.get("Accept", ""):
