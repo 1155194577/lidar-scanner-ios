@@ -1,12 +1,9 @@
 import Combine
-import CoreTransferable
 import Foundation
 import RealityKit
 import simd
-import UniformTypeIdentifiers
 
-final class STLFile: Transferable, Sendable {
-    static let contentType = UTType(filenameExtension: "stl") ?? .data
+final class STLFile: Identifiable, Sendable {
     let url: URL
 
     fileprivate init(url: URL) {
@@ -15,12 +12,6 @@ final class STLFile: Transferable, Sendable {
 
     deinit {
         try? FileManager.default.removeItem(at: url.deletingLastPathComponent())
-    }
-
-    static var transferRepresentation: some TransferRepresentation {
-        FileRepresentation(exportedContentType: contentType) { file in
-            SentTransferredFile(file.url)
-        }
     }
 }
 

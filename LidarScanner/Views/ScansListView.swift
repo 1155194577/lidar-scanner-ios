@@ -1,5 +1,6 @@
 import QuickLook
 import SwiftUI
+import UIKit
 
 struct ScansListView: View {
     @EnvironmentObject private var store: ScanStore
@@ -7,7 +8,6 @@ struct ScansListView: View {
     @State private var error: (title: String, message: String)?
     @State private var pendingExport: ScanFile?
     @State private var stlFile: STLFile?
-    @State private var showsExporter = false
 
     var body: some View {
         Group {
@@ -52,14 +52,8 @@ struct ScansListView: View {
                 await exportSTL(for: scan)
             }
         }
-        .fileExporter(isPresented: $showsExporter, item: stlFile, contentTypes: [STLFile.contentType],
-                      defaultFilename: stlFile?.url.lastPathComponent) { result in
-            stlFile = nil
-            if case .failure(let failure) = result {
-                error = ("Couldn't export STL", failure.localizedDescription)
-            }
-        } onCancellation: {
-            stlFile = nil
+        .sheet(item: $stlFile) { file in
+            STLDocumentPicker(file: file) { stlFile = nil }
         }
         .alert(error?.title ?? "", isPresented: Binding(get: { error != nil }, set: { if !$0 { error = nil } })) {
             Button("OK", role: .cancel) {}
@@ -123,7 +117,6 @@ struct ScansListView: View {
             let file = try await STLExporter.export(scan.url)
             try Task.checkCancellation()
             stlFile = file
-            showsExporter = true
         } catch {
             if !Task.isCancelled {
                 self.error = ("Couldn't export STL", error.localizedDescription)
@@ -138,6 +131,37 @@ struct ScansListView: View {
             }
         } catch {
             self.error = ("Couldn't delete scan", error.localizedDescription)
+        }
+    }
+}
+
+private struct STLDocumentPicker: UIViewControllerRepresentable {
+    let file: STLFile
+    let onDismiss: () -> Void
+
+    func makeUIViewController(context: Context) -> UIDocumentPickerViewController {
+        let picker = UIDocumentPickerViewController(forExporting: [file.url], asCopy: true)
+        picker.delegate = context.coordinator
+        return picker
+    }
+
+    func updateUIViewController(_ picker: UIDocumentPickerViewController, context: Context) {}
+
+    func makeCoordinator() -> Coordinator { Coordinator(onDismiss: onDismiss) }
+
+    final class Coordinator: NSObject, UIDocumentPickerDelegate {
+        let onDismiss: () -> Void
+
+        init(onDismiss: @escaping () -> Void) {
+            self.onDismiss = onDismiss
+        }
+
+        func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
+            onDismiss()
+        }
+
+        func documentPickerWasCancelled(_ controller: UIDocumentPickerViewController) {
+            onDismiss()
         }
     }
 }
