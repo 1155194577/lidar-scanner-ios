@@ -77,8 +77,13 @@ final class LidarScannerUITests: XCTestCase {
             menu.tap()
             XCTAssertTrue(app.buttons["Share USDZ"].exists)
             app.buttons["Export as STL"].tap()
-            XCTAssertTrue(app.buttons["Save"].waitForExistence(timeout: 15))
-            app.buttons["Cancel"].tap()
+            let save = app.buttons["Save"]
+            XCTAssertTrue(save.waitForExistence(timeout: 15))
+            if !save.isEnabled {
+                app.buttons["On My iPhone"].firstMatch.tap()
+            }
+            save.tap()
+            XCTAssertTrue(save.waitForNonExistence(timeout: 10))
             XCTAssertTrue(menu.waitForExistence(timeout: 5))
         }
     }
