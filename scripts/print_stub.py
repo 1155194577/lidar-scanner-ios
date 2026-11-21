@@ -15,6 +15,7 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 MESH_EXTENSIONS = (".obj", ".ply", ".usdz")
+MAX_UPLOAD_BYTES = 200 * 1024 * 1024
 
 
 def cube_stl(size_mm=20.0):
@@ -53,6 +54,7 @@ def parse_multipart(content_type, body):
 
 class Handler(BaseHTTPRequestHandler):
     delay = 0.0
+    timeout = 60
 
     def do_GET(self):
         if self.path.rstrip("/") == "/health":
@@ -66,7 +68,14 @@ class Handler(BaseHTTPRequestHandler):
         content_type = self.headers.get("Content-Type", "")
         if not content_type.startswith("multipart/form-data"):
             return self.reply(400, "text/plain", b"expected multipart/form-data\n")
-        body = self.rfile.read(int(self.headers.get("Content-Length", 0)))
+        try:
+            length = int(self.headers.get("Content-Length", ""))
+        except ValueError:
+            return self.reply(411, "text/plain", b"Content-Length required\n")
+        if length < 0 or length > MAX_UPLOAD_BYTES:
+            self.close_connection = True
+            return self.reply(413, "text/plain", b"upload larger than %d MB\n" % (MAX_UPLOAD_BYTES // (1024 * 1024)))
+        body = self.rfile.read(length)
         parts = parse_multipart(content_type, body)
 
         if "mesh" in parts:
