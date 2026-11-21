@@ -94,6 +94,11 @@ private struct CaptureControls: View {
                     primaryButton("Start Capture") { session.startCapturing() }
                 case .capturing:
                     if session.userCompletedScanPass {
+                        if !session.feedback.contains(.objectNotFlippable) {
+                            Button("Flip Object") { session.beginNewScanPassAfterFlip() }
+                                .buttonStyle(.bordered)
+                                .controlSize(.large)
+                        }
                         Button("Another Pass") { session.beginNewScanPass() }
                             .buttonStyle(.bordered)
                             .controlSize(.large)
@@ -124,7 +129,7 @@ private struct CaptureControls: View {
         case .detecting: return "Fit the box around the object, then start capturing."
         case .capturing:
             return session.userCompletedScanPass
-                ? "Pass complete. Flip the object or lower the camera for another pass, or finish."
+                ? "Pass complete. Flip the object for a new pass, circle it again from a lower angle, or finish."
                 : "Walk slowly around the object, keeping it in the frame."
         default: return nil
         }
@@ -201,9 +206,10 @@ final class ObjectScanModel: ObservableObject {
         photogrammetry = nil
         session?.cancel()
         session = nil
-        if !isFinished, let workspace {
+        if let workspace {
             try? FileManager.default.removeItem(at: workspace)
         }
+        workspace = nil
     }
 
     private func handle(_ state: ObjectCaptureSession.CaptureState) {
