@@ -5,7 +5,6 @@ import SwiftUI
 /// Single-photo print: measure the object's height with LiDAR (tap its base, then its top), then send one photo plus the height to the print server.
 struct PhotoPrintView: View {
     @Environment(\.dismiss) private var dismiss
-    @EnvironmentObject private var printJobs: PrintJobManager
     @StateObject private var model = PhotoPrintModel(fake: LaunchArguments.contains(LaunchArguments.fakePhotoCapture))
 
     var body: some View {
@@ -58,7 +57,7 @@ struct PhotoPrintView: View {
                 Text((model.photoIssues ?? []).map(\.message).joined(separator: "\n"))
             }
             .alert("Couldn't print photo", isPresented: Binding(get: { model.errorMessage != nil }, set: { if !$0 { model.errorMessage = nil } })) {
-                Button("Retry") { model.print(using: printJobs) }
+                Button("Retry") { model.print() }
                 Button("Dismiss", role: .cancel) {}
             } message: {
                 Text(model.errorMessage ?? "")
@@ -83,7 +82,7 @@ struct PhotoPrintView: View {
                     .controlSize(.large)
                     .disabled(model.isFake || model.base == nil)
                 Button {
-                    model.print(using: printJobs)
+                    model.print()
                 } label: {
                     Label("Take Photo & Print", systemImage: "printer")
                 }
@@ -98,9 +97,25 @@ struct PhotoPrintView: View {
 
 struct PrintedModel: Identifiable {
     let url: URL
+    var sourceScanFileName: String? = nil
     var sourceScan: ScanFile? = nil
     var kind: ScanKind = .photo
     var id: URL { url }
+
+    @MainActor
+    func save(in store: ScanStore) throws {
+        if let scan = sourceScan {
+            try store.savePrintedSTL(url, for: scan)
+        } else if let fileName = sourceScanFileName {
+            store.reload()
+            guard let scan = store.scans.first(where: { $0.url.lastPathComponent == fileName && $0.kind != .photo }) else {
+                throw CocoaError(.fileNoSuchFile)
+            }
+            try store.savePrintedSTL(url, for: scan)
+        } else {
+            try store.savePrint(url, kind: kind)
+        }
+    }
 }
 
 struct PrintResultView: View {
@@ -123,7 +138,7 @@ struct PrintResultView: View {
                             .foregroundStyle(.secondary)
                     } else {
                         Button(action: save) {
-                            Label(model.sourceScan == nil ? "Save to My Scans" : "Save to Scan", systemImage: "square.and.arrow.down")
+                            Label(model.sourceScan == nil && model.sourceScanFileName == nil ? "Save to My Scans" : "Save to Scan", systemImage: "square.and.arrow.down")
                         }
                     }
                     Button {
@@ -156,11 +171,7 @@ struct PrintResultView: View {
 
     private func save() {
         do {
-            if let scan = model.sourceScan {
-                try store.savePrintedSTL(model.url, for: scan)
-            } else {
-                try store.savePrint(model.url, kind: model.kind)
-            }
+            try model.save(in: store)
             isSaved = true
         } catch {
             saveError = error.localizedDescription

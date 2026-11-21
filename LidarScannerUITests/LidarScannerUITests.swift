@@ -290,7 +290,6 @@ final class LidarScannerUITests: XCTestCase {
 
         XCTAssertEqual(app.staticTexts["photoHeight"].waitForExistence(timeout: 5) ? app.staticTexts["photoHeight"].label : nil, "Height: 120 mm")
         app.buttons["takePhotoAndPrintButton"].tap()
-        tapSharePrintResult(in: app, timeout: 15)
 
         let shareSheet = app.otherElements["ActivityListView"]
         XCTAssertTrue(shareSheet.waitForExistence(timeout: 15), "STL share sheet did not open")
@@ -488,6 +487,12 @@ final class LidarScannerUITests: XCTestCase {
         let share = app.buttons["Share STL"]
         XCTAssertTrue(share.waitForExistence(timeout: 5), "Print result did not open")
         share.tap()
+    }
+
+    private func openPrintResult(in app: XCUIApplication, timeout: TimeInterval) {
+        let result = app.buttons["printResultButton"].firstMatch
+        XCTAssertTrue(result.waitForExistence(timeout: timeout), "Print job did not finish")
+        result.tap()
     }
 
     private func assertShareSheet(in app: XCUIApplication, captionPrefix: String, errorAlert: String, timeout: TimeInterval) {
