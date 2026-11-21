@@ -87,6 +87,12 @@ struct HomeView: View {
                     } else {
                         UnsupportedView(feature: "Photo Print", requirement: "an iPhone or iPad with a LiDAR sensor")
                     }
+                case .face:
+                    if DeviceSupport.faceScan {
+                        FaceScanView()
+                    } else {
+                        UnsupportedView(feature: "Face Scan", requirement: "an iPhone or iPad with Face ID (TrueDepth camera)")
+                    }
                 }
             }
             .printJobBanner()

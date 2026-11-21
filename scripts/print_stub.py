@@ -3,10 +3,16 @@
 
 Mirrors the live contract: POST /print takes multipart form data with either
 `mesh` (an .obj, .ply or .usdz file in metres) or `photo` (.jpg/.png) plus an
-optional `height_mm` and, for photo + depth fusion, `depth` (float32 metres),
-`depth_width`, `depth_height`, `intrinsics`, `image_orientation` and optional
-`depth_confidence`, `object_points`; any photo may carry `camera_transform` with
-`image_orientation`. It answers with a small STL cube as `model/stl` and an
+optional `height_mm`, or `mode=face` with a front-camera `photo`, `intrinsics`,
+`camera_transform`, `image_orientation`, optional `depth` (float32 metres) with
+`depth_width`/`depth_height`/`depth_intrinsics`/`depth_extrinsics`, `face_transform`,
+`face_vertices` (float32 xyz) with `face_vertex_count` and `height_mm`. Photo + depth
+fusion adds `depth` (float32 metres), `depth_width`, `depth_height`, `intrinsics`,
+`image_orientation` and optional `depth_confidence`, `object_points`; any photo may
+carry `camera_transform` with `image_orientation`.
+Every print takes a client UUID `job_id`. NDJSON clients get accepted,
+progress and terminal events; GET /print/{id} replays progress, and
+GET /print/{id}/result long-polls an STL. Legacy clients get `model/stl` and an
 `X-Print-Report` JSON header. Errors are JSON `{"detail": ...}`. With --token,
 requests must carry `Authorization: Bearer <token>` or get a 401. GET /last returns a JSON summary
 of the last accepted print request, for UI tests.
@@ -166,18 +172,18 @@ class Handler(BaseHTTPRequestHandler):
     fail_stage = None
     timeout = 60
     last_request = {}
+    jobs = {}
+    jobs_lock = threading.Lock()
 
     def do_GET(self):
         if self.path.rstrip("/") == "/health":
-            self.reply(200, "text/plain", b"ok\n")
-        elif self.path.rstrip("/") == "/last":
-            self.reply(200, "application/json", json.dumps(Handler.last_request).encode())
-        else:
-            self.reply(404, "text/plain", b"not found\n")
-
-    def do_POST(self):
-        path = self.path.rstrip("/")
-        if path not in ("/print", "/photo-check"):
+            return self.reply(200, "text/plain", b"ok\n")
+        if self.path.rstrip("/") == "/last":
+            return self.reply(200, "application/json", json.dumps(Handler.last_request).encode())
+        if not self.authorized():
+            return
+        path = self.path.removeprefix("/fail").strip("/").split("/")
+        if len(path) not in (2, 3) or path[0] != "print":
             return self.error(404, "not found")
         with self.jobs_lock:
             job = self.jobs.get(path[1])
@@ -203,7 +209,8 @@ class Handler(BaseHTTPRequestHandler):
         return True
 
     def do_POST(self):
-        if self.path.rstrip("/") not in ("/print", "/fail/print"):
+        path = self.path.rstrip("/")
+        if path not in ("/print", "/fail/print", "/photo-check"):
             return self.error(404, "not found")
         if not self.authorized():
             return

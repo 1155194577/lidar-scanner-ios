@@ -108,7 +108,7 @@ final class PrintJobManager: ObservableObject {
     }
 
     func printedModel(for job: PrintJob) -> PrintedModel? {
-        job.result.map { PrintedModel(url: $0, sourceScanFileName: job.sourceScanFileName) }
+        job.result.map { PrintedModel(url: $0, sourceScanFileName: job.sourceScanFileName, kind: job.kind == "face" ? .face : .photo) }
     }
 
     func retry(_ job: PrintJob) {

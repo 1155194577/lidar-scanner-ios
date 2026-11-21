@@ -6,6 +6,7 @@ import SwiftUI
 /// Face print: the front TrueDepth camera reads the face's depth, and the print server fills in the back of the head to make a bust STL.
 struct FaceScanView: View {
     @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject private var printJobs: PrintJobManager
     @StateObject private var model = FaceScanModel(fake: LaunchArguments.contains(LaunchArguments.fakeFaceCapture))
 
     var body: some View {
@@ -24,18 +25,6 @@ struct FaceScanView: View {
                 .padding()
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .background { cameraPreview.ignoresSafeArea() }
-                if model.isPrinting {
-                    VStack(spacing: 16) {
-                        ProgressView().controlSize(.large)
-                        Text("Building the bust STL").font(.headline)
-                        Button("Cancel", role: .cancel) { model.cancelPrint() }
-                            .buttonStyle(.bordered)
-                    }
-                    .padding(24)
-                    .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16))
-                    .accessibilityElement(children: .contain)
-                    .accessibilityIdentifier("printProgress")
-                }
             }
             .navigationTitle("Face Scan")
             .navigationBarTitleDisplayMode(.inline)
@@ -44,9 +33,6 @@ struct FaceScanView: View {
                     Button("Close") { dismiss() }
                         .accessibilityIdentifier("closeButton")
                 }
-            }
-            .sheet(item: $model.printedModel) { printed in
-                PrintResultView(model: printed)
             }
             .alert("Couldn't print face", isPresented: Binding(get: { model.errorMessage != nil }, set: { if !$0 { model.errorMessage = nil } })) {
                 Button("OK", role: .cancel) {}
@@ -81,13 +67,13 @@ struct FaceScanView: View {
             .background(.regularMaterial, in: Capsule())
             .accessibilityIdentifier("bustHeightStepper")
             Button {
-                model.captureAndPrint()
+                model.captureAndPrint(using: printJobs)
             } label: {
                 Label("Capture Face & Print", systemImage: "printer")
             }
             .buttonStyle(.borderedProminent)
             .controlSize(.large)
-            .disabled(!model.faceDetected || model.isPrinting)
+            .disabled(!model.faceDetected || model.isCapturing)
             .accessibilityIdentifier("captureFaceButton")
         }
     }
@@ -96,14 +82,13 @@ struct FaceScanView: View {
 @MainActor
 final class FaceScanModel: ObservableObject {
     @Published private(set) var faceDetected: Bool
-    @Published private(set) var isPrinting = false
+    @Published private(set) var isCapturing = false
     @Published var heightMM = FaceCapture.defaultHeightMM
-    @Published var printedModel: PrintedModel?
     @Published var errorMessage: String?
 
     let isFake: Bool
     private var pendingCapture: Date?
-    private var printTask: Task<Void, Never>?
+    private weak var manager: PrintJobManager?
 
     /// Depth arrives at about 15 fps; after this long without it, print from the photo and face mesh alone.
     private static let depthWait: TimeInterval = 1
@@ -114,22 +99,20 @@ final class FaceScanModel: ObservableObject {
     }
 
     var instruction: String {
-        if isPrinting { return "Hold on while the print server builds your bust." }
+        if isCapturing { return "Keep still while the camera reads your face." }
         if !faceDetected { return "Hold the phone at arm's length and look straight at the screen." }
         return "Keep still with a neutral expression, then capture."
     }
 
-    func captureAndPrint() {
-        guard !isPrinting else { return }
+    func captureAndPrint(using manager: PrintJobManager) {
+        guard !isCapturing else { return }
+        self.manager = manager
         if isFake {
             upload(Self.sampleCapture(heightMM: heightMM))
         } else {
+            isCapturing = true
             pendingCapture = Date()
         }
-    }
-
-    func cancelPrint() {
-        printTask?.cancel()
     }
 
     /// Called for every AR frame; takes the capture from the first frame with depth after the button was tapped.
@@ -139,6 +122,7 @@ final class FaceScanModel: ObservableObject {
         guard let requested = pendingCapture, let face else { return }
         guard frame.capturedDepthData != nil || Date().timeIntervalSince(requested) > Self.depthWait else { return }
         pendingCapture = nil
+        isCapturing = false
         guard let capture = Self.capture(from: frame, face: face, heightMM: heightMM) else {
             errorMessage = "Couldn't read the camera frame. Try again."
             return
@@ -147,20 +131,7 @@ final class FaceScanModel: ObservableObject {
     }
 
     private func upload(_ capture: FaceCapture) {
-        isPrinting = true
-        printTask = Task {
-            do {
-                let url = try await PrintService().requestSTL(for: .face(capture), name: Self.fileName())
-                try Task.checkCancellation()
-                printedModel = PrintedModel(url: url, kind: .face)
-            } catch is CancellationError {
-            } catch let error as URLError where error.code == .cancelled {
-            } catch {
-                errorMessage = error.localizedDescription
-            }
-            isPrinting = false
-            printTask = nil
-        }
+        manager?.start(input: .face(capture), name: Self.fileName(), kind: "face")
     }
 
     nonisolated static func capture(from frame: ARFrame, face: ARFaceAnchor, heightMM: Double) -> FaceCapture? {

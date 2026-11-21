@@ -5,6 +5,7 @@ import SwiftUI
 /// Single-photo print: measure the object's height with LiDAR (tap its base, then its top), then send one photo plus the height to the print server.
 struct PhotoPrintView: View {
     @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject private var printJobs: PrintJobManager
     @StateObject private var model = PhotoPrintModel(fake: LaunchArguments.contains(LaunchArguments.fakePhotoCapture))
 
     var body: some View {
@@ -50,17 +51,14 @@ struct PhotoPrintView: View {
                         .accessibilityIdentifier("closeButton")
                 }
             }
-            .sheet(item: $model.printedModel) { printed in
-                PrintResultView(model: printed)
-            }
             .alert("Retake the photo?", isPresented: Binding(get: { model.photoIssues != nil }, set: { if !$0 { model.photoIssues = nil } })) {
                 Button("Retake", role: .cancel) { model.retake() }
-                Button("Print Anyway") { model.printAnyway() }
+                Button("Print Anyway") { model.printAnyway(using: printJobs) }
             } message: {
                 Text((model.photoIssues ?? []).map(\.message).joined(separator: "\n"))
             }
             .alert("Couldn't print photo", isPresented: Binding(get: { model.errorMessage != nil }, set: { if !$0 { model.errorMessage = nil } })) {
-                Button("Retry") { model.print() }
+                Button("Retry") { model.print(using: printJobs) }
                 Button("Dismiss", role: .cancel) {}
             } message: {
                 Text(model.errorMessage ?? "")
@@ -85,7 +83,7 @@ struct PhotoPrintView: View {
                     .controlSize(.large)
                     .disabled(model.isFake || model.base == nil)
                 Button {
-                    model.print()
+                    model.print(using: printJobs)
                 } label: {
                     Label("Take Photo & Print", systemImage: "printer")
                 }
@@ -189,7 +187,8 @@ final class PhotoPrintModel: ObservableObject {
     @Published var errorMessage: String?
     /// What `/photo-check` flagged about the last shot; the user retakes or prints anyway.
     @Published var photoIssues: [PhotoCheck.Issue]?
-    @Published private(set) var progressText = "Preparing STL for printing"
+    @Published private(set) var isPrinting = false
+    @Published private(set) var progressText = "Checking the photo"
 
     let isFake: Bool
     weak var arView: ARView?
@@ -241,14 +240,13 @@ final class PhotoPrintModel: ObservableObject {
         top = nil
     }
 
-    func print() {
-        guard heightMM != nil else { return }
+    func print(using manager: PrintJobManager) {
+        guard !isPrinting, heightMM != nil else { return }
         guard let shot = capture() else {
             errorMessage = "Couldn't take the photo. Try again."
             return
         }
         isPrinting = true
-        progressText = "Checking the photo"
         printTask = Task {
             // The check is advisory: if it fails or times out, print anyway.
             let check = try? await PrintService().checkPhoto(shot.checkPhoto, pose: shot.checkPose)
@@ -262,16 +260,16 @@ final class PhotoPrintModel: ObservableObject {
                 finishPrinting()
                 return
             }
-            await upload(shot)
+            finishPrinting()
+            upload(shot, using: manager)
         }
     }
 
-    func printAnyway() {
+    func printAnyway(using manager: PrintJobManager) {
         guard let shot = flaggedShot else { return }
         flaggedShot = nil
         photoIssues = nil
-        isPrinting = true
-        printTask = Task { await upload(shot) }
+        upload(shot, using: manager)
     }
 
     func retake() {
@@ -279,22 +277,9 @@ final class PhotoPrintModel: ObservableObject {
         photoIssues = nil
     }
 
-    private func upload(_ shot: Shot) async {
-        guard let height = heightMM else {
-            finishPrinting()
-            return
-        }
-        progressText = "Preparing STL for printing"
-        do {
-            let url = try await PrintService().requestSTL(for: .photo(shot.photo, heightMM: height, pose: shot.pose, depth: shot.depth), name: Self.fileName())
-            try Task.checkCancellation()
-            printedModel = PrintedModel(url: url)
-        } catch is CancellationError {
-        } catch let error as URLError where error.code == .cancelled {
-        } catch {
-            errorMessage = error.localizedDescription
-        }
-        finishPrinting()
+    private func upload(_ shot: Shot, using manager: PrintJobManager) {
+        guard let height = heightMM else { return }
+        manager.start(input: .photo(shot.photo, heightMM: height, pose: shot.pose, depth: shot.depth), name: Self.fileName(), kind: "photo")
     }
 
     private func finishPrinting() {
