@@ -312,7 +312,7 @@ final class LidarScannerUITests: XCTestCase {
 
     func testPrintStreamFailureShowsDetailAndRetry() throws {
         try requirePrintStub()
-        let app = launch(["-UITestSeedSampleScans", "-printBaseURL", Self.stubURL + "/fail", "-printAPIToken", Self.stubToken])
+        let app = launch(["-UITestSeedSampleScans", "-printBaseURL", Self.stubHost + "/compat-fail", "-printAPIToken", Self.stubToken])
         openMyScans(in: app)
         let button = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'print-Room '")).firstMatch
         XCTAssertTrue(button.waitForExistence(timeout: 5))
@@ -379,9 +379,38 @@ final class LidarScannerUITests: XCTestCase {
         XCTAssertEqual(received["uploaded"] as? [String], ["photo", "depth", "depth_confidence"])
     }
 
+    func testPhotoPrintShowsS3PreviewBeforePrintingAndOpensSTLViewer() throws {
+        try requirePrintStub()
+        let app = launch(["-UITestFakePhotoCapture", "-UITestFakePitch", "5", "-printBaseURL", Self.stubHost, "-printAPIToken", Self.stubToken])
+        app.buttons["photoPrintButton"].tap()
+        let capture = app.buttons["takePhotoAndPrintButton"]
+        XCTAssertTrue(capture.waitForExistence(timeout: 5))
+        capture.tap()
+
+        let photo = app.images["uploadedPhotoPreview"]
+        XCTAssertTrue(photo.waitForExistence(timeout: 15))
+        let fileID = app.staticTexts["uploadedFileID"]
+        XCTAssertTrue(fileID.label.hasSuffix("/photo"))
+        XCTAssertTrue(app.buttons["Copy File ID"].exists)
+        XCTAssertTrue(app.buttons["Copy S3 Link"].exists)
+        XCTAssertFalse(app.buttons["printResultButton"].exists)
+        savePrintScreenshot("s3-upload-preview", app: app)
+        let confirm = app.buttons["confirmS3Print"]
+        XCTAssertTrue(confirm.isEnabled)
+        confirm.tap()
+
+        let viewer = app.descendants(matching: .any)["stlViewer"].firstMatch
+        XCTAssertTrue(viewer.waitForExistence(timeout: 25), "Downloaded STL did not render")
+        XCTAssertTrue(app.buttons["Share STL"].exists)
+        XCTAssertTrue(app.buttons["Save to My Scans"].exists)
+        savePrintScreenshot("stl-3d-viewer", app: app)
+        viewer.swipeLeft()
+        savePrintScreenshot("stl-3d-viewer-orbit", app: app)
+    }
+
     func testPhotoPrintRenewsExpiredUploadURLAndReuploadsMissingFile() throws {
         try requirePrintStub()
-        try printPhoto(baseURL: Self.stubURL + "/expire-drop")
+        try printPhoto(baseURL: Self.stubHost + "/compat-expire-drop")
         let received = try lastStubRequest()
         XCTAssertEqual(received["uploaded"] as? [String], ["photo", "depth", "depth_confidence"])
         let stats = try XCTUnwrap(received["upload_stats"] as? [String: Int])
@@ -392,7 +421,7 @@ final class LidarScannerUITests: XCTestCase {
 
     func testPhotoPrintFallsBackToMultipartWithoutSignedUploads() throws {
         try requirePrintStub()
-        try printPhoto(baseURL: Self.stubURL + "/legacy")
+        try printPhoto(baseURL: Self.stubHost + "/legacy")
         let received = try lastStubRequest()
         XCTAssertNil(received["uploaded"])
         XCTAssertEqual(received["fields"] as? [String], ["camera_transform", "depth", "depth_confidence", "depth_height", "depth_width", "height_mm", "image_orientation", "intrinsics", "job_id", "object_points", "photo"])
@@ -655,7 +684,7 @@ final class LidarScannerUITests: XCTestCase {
     private func lastStubRequest() throws -> [String: Any] {
         let done = expectation(description: "stub last request")
         var body = Data()
-        URLSession.shared.dataTask(with: URL(string: "\(Self.stubURL)/last")!) { data, _, _ in
+        URLSession.shared.dataTask(with: URL(string: "\(Self.stubHost)/last")!) { data, _, _ in
             body = data ?? Data()
             done.fulfill()
         }.resume()
@@ -663,19 +692,20 @@ final class LidarScannerUITests: XCTestCase {
         return try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: Any], "GET /last returned no JSON")
     }
 
-    private static let stubURL = "http://127.0.0.1:8765"
+    private static let stubHost = "http://127.0.0.1:8765"
+    private static let stubURL = stubHost + "/compat"
     private static let stubToken = "stub-token"
 
     private func requirePrintStub() throws {
         let done = expectation(description: "stub health check")
         var reachable = false
-        URLSession.shared.dataTask(with: URL(string: "\(Self.stubURL)/health")!) { _, response, _ in
+        URLSession.shared.dataTask(with: URL(string: "\(Self.stubHost)/health")!) { _, response, _ in
             reachable = (response as? HTTPURLResponse)?.statusCode == 200
             done.fulfill()
         }.resume()
         wait(for: [done], timeout: 5)
         guard reachable else {
-            XCTFail("Print stub isn't running at \(Self.stubURL); start it with `python3 scripts/print_stub.py`.")
+            XCTFail("Print stub isn't running at \(Self.stubHost); start it with `python3 scripts/print_stub.py --token stub-token`.")
             throw XCTSkip("print stub not running")
         }
     }

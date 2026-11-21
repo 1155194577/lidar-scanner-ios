@@ -233,6 +233,49 @@ struct PrintService {
         let url: URL
         let method: String?
         let headers: [String: String]?
+        let file_id: String?
+        let get_url: URL?
+    }
+
+    struct UploadReference: Decodable, Equatable {
+        let file_id: String
+        let get_url: URL
+    }
+
+    func confirmedUploads(jobID: String) async throws -> [String: UploadReference] {
+        var request = URLRequest(url: uploadsEndpoint.appendingPathComponent(jobID))
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        if let token { request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization") }
+        struct Confirmation: Decodable { let uploads: [String: UploadReference] }
+        let (data, response) = try await session.data(for: request)
+        let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+        guard (200..<300).contains(status) else {
+            throw PrintError.server(status: status, message: Self.errorMessage(from: data))
+        }
+        return try JSONDecoder().decode(Confirmation.self, from: data).uploads
+    }
+
+    func prepareUploads(for input: PrintInput, jobID: String, state: PrintUploadState,
+                        onProgress: @escaping @Sendable (PrintProgress) -> Void) async throws -> [String: UploadReference]? {
+        guard signedUploads, !state.legacy else { return nil }
+        let files = try payload(for: input).files
+        let pending = files.filter { !state.isUploaded($0.name) }
+        if !pending.isEmpty, !(try await upload(pending, jobID: jobID, state: state, onProgress: onProgress)) {
+            state.legacy = true
+            return nil
+        }
+        guard state.supportsConfirmation else { return nil }
+        let references: [String: UploadReference]
+        do {
+            references = try await confirmedUploads(jobID: jobID)
+        } catch PrintError.server(let status, let message) where status == 404 {
+            state.forget(files.map(\.name))
+            throw PrintError.server(status: status, message: message)
+        }
+        guard files.allSatisfy({ references[$0.name] != nil }) else {
+            throw PrintError.unexpectedResponse("missing uploaded files")
+        }
+        return references
     }
 
     /// Step 1; nil when the server has no signed uploads.
@@ -255,6 +298,9 @@ struct PrintService {
     private func upload(_ files: [PrintPayload.File], jobID: String, state: PrintUploadState,
                         onProgress: @escaping @Sendable (PrintProgress) -> Void) async throws -> Bool {
         guard var slots = try await requestUploads(jobID: jobID, files: files) else { return false }
+        if slots.values.contains(where: { $0.file_id != nil && $0.get_url != nil }) {
+            state.supportsConfirmation = true
+        }
         let folder = Self.uploadDirectory.appendingPathComponent(jobID, isDirectory: true)
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: folder) }
@@ -322,7 +368,7 @@ struct PrintService {
                          onProgress: @escaping @Sendable (PrintProgress) -> Void,
                          onAccepted: @escaping @Sendable (String) -> Void) async throws -> URL {
         let transfer = PrintTransfer(configuration: session.configuration, stallTimeout: stallTimeout, onProgress: onProgress, onAccepted: onAccepted)
-        let data = try await withTaskCancellationHandler {
+        let result = try await withTaskCancellationHandler {
             try await transfer.run(request)
         } onCancel: {
             transfer.cancel()
@@ -330,7 +376,16 @@ struct PrintService {
 
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let url = directory.appendingPathComponent(name).appendingPathExtension("stl")
-        try data.write(to: url, options: .atomic)
+        switch result {
+        case .bytes(let data):
+            try data.write(to: url, options: .atomic)
+        case .remote(let signedURL):
+            let (data, response) = try await session.data(from: signedURL)
+            guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode), !data.isEmpty else {
+                throw PrintError.server(status: (response as? HTTPURLResponse)?.statusCode ?? 0, message: "Couldn't download STL from storage")
+            }
+            try data.write(to: url, options: .atomic)
+        }
         return url
     }
 
@@ -385,13 +440,17 @@ struct PrintService {
 }
 
 private final class PrintTransfer: NSObject, URLSessionDataDelegate, @unchecked Sendable {
+    enum Output {
+        case bytes(Data)
+        case remote(URL)
+    }
     private let queue = DispatchQueue(label: "PrintTransfer")
     private let configuration: URLSessionConfiguration
     private let stallTimeout: TimeInterval
     private let onProgress: @Sendable (PrintProgress) -> Void
     private let onAccepted: @Sendable (String) -> Void
     private var session: URLSession?
-    private var continuation: CheckedContinuation<Data, Error>?
+    private var continuation: CheckedContinuation<Output, Error>?
     private var response: HTTPURLResponse?
     private var buffer = Data()
     private var watchdog: DispatchWorkItem?
@@ -405,7 +464,7 @@ private final class PrintTransfer: NSObject, URLSessionDataDelegate, @unchecked 
         self.onAccepted = onAccepted
     }
 
-    func run(_ request: URLRequest) async throws -> Data {
+    func run(_ request: URLRequest) async throws -> Output {
         try await withCheckedThrowingContinuation { continuation in
             queue.async {
                 self.continuation = continuation
@@ -443,7 +502,7 @@ private final class PrintTransfer: NSObject, URLSessionDataDelegate, @unchecked 
         queue.asyncAfter(deadline: .now() + stallTimeout, execute: work)
     }
 
-    private func finish(_ result: Result<Data, Error>) {
+    private func finish(_ result: Result<Output, Error>) {
         guard let continuation else { return }
         self.continuation = nil
         watchdog?.cancel()
@@ -488,6 +547,7 @@ private final class PrintTransfer: NSObject, URLSessionDataDelegate, @unchecked 
         let progress: Double?
         let detail: String?
         let stl_base64: String?
+        let stl_url: URL?
         let job_id: String?
     }
 
@@ -505,10 +565,17 @@ private final class PrintTransfer: NSObject, URLSessionDataDelegate, @unchecked 
             case "error":
                 finish(.failure(PrintError.jobFailed(event.detail ?? "Printing failed")))
             case "done":
+                if let url = event.stl_url {
+                    guard ["http", "https"].contains(url.scheme?.lowercased() ?? ""), url.host != nil else {
+                        throw PrintError.unexpectedResponse("invalid STL download URL")
+                    }
+                    finish(.success(.remote(url)))
+                    return
+                }
                 guard let encoded = event.stl_base64, let data = Data(base64Encoded: encoded), !data.isEmpty else {
                     throw PrintError.unexpectedResponse("missing or invalid STL data")
                 }
-                finish(.success(data))
+                finish(.success(.bytes(data)))
             default: break
             }
         } catch { finish(.failure(error)) }
@@ -530,7 +597,7 @@ private final class PrintTransfer: NSObject, URLSessionDataDelegate, @unchecked 
             finish(.failure(PrintError.unexpectedResponse(response.mimeType ?? "no content type")))
         } else if buffer.isEmpty {
             finish(.failure(PrintError.unexpectedResponse("empty body")))
-        } else { finish(.success(buffer)) }
+        } else { finish(.success(.bytes(buffer))) }
     }
 }
 
@@ -584,6 +651,7 @@ final class PrintUploadState: @unchecked Sendable {
     private let lock = NSLock()
     private var uploaded = Set<String>()
     private var usesMultipart = false
+    private var hasReadURLs = false
 
     /// The server has no signed uploads, so this job uses the single multipart POST.
     var legacy: Bool {
@@ -592,6 +660,10 @@ final class PrintUploadState: @unchecked Sendable {
     }
 
     var uploadedNames: Set<String> { lock.withLock { uploaded } }
+    var supportsConfirmation: Bool {
+        get { lock.withLock { hasReadURLs } }
+        set { lock.withLock { hasReadURLs = newValue } }
+    }
     func isUploaded(_ name: String) -> Bool { lock.withLock { uploaded.contains(name) } }
     func markUploaded(_ name: String) { _ = lock.withLock { uploaded.insert(name) } }
     func forget(_ names: [String]) { lock.withLock { uploaded.subtract(names) } }

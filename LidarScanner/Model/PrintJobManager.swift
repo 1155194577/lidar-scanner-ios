@@ -67,6 +67,10 @@ extension PrintJob {
 final class PrintJobManager: ObservableObject {
     static let shared = PrintJobManager(notifications: !LaunchArguments.contains(LaunchArguments.resetScans))
     @Published private(set) var jobs: [PrintJob] = []
+    @Published private(set) var uploadConfirmations: [String: [String: PrintService.UploadReference]] = [:]
+    private var confirmedJobs = Set<String>()
+    private var shownUploads = Set<String>()
+    private var shownResults = Set<String>()
     private var inputs: [String: PrintInput] = [:]
     private var uploads: [String: PrintUploadState] = [:]
     private var tasks: [String: Task<Void, Never>] = [:]
@@ -118,6 +122,31 @@ final class PrintJobManager: ObservableObject {
         job.result.map { PrintedModel(url: $0, sourceScanFileName: job.sourceScanFileName, kind: job.kind == "face" ? .face : .photo) }
     }
 
+    var pendingPresentation: String? {
+        jobs.first { job in
+            (uploadConfirmations[job.id] != nil && !shownUploads.contains(job.id)) ||
+            (job.result != nil && confirmedJobs.contains(job.id) && !shownResults.contains(job.id))
+        }?.id
+    }
+
+    func markPresented(_ id: String) {
+        if uploadConfirmations[id] != nil { shownUploads.insert(id) }
+        else { shownResults.insert(id) }
+    }
+
+    func refreshUpload(_ job: PrintJob) async throws -> [String: PrintService.UploadReference] {
+        try await service(job).confirmedUploads(jobID: job.id)
+    }
+
+    func confirmPrint(_ job: PrintJob) {
+        guard uploadConfirmations.removeValue(forKey: job.id) != nil,
+              let index = jobs.firstIndex(where: { $0.id == job.id }) else { return }
+        confirmedJobs.insert(job.id)
+        jobs[index].progress = PrintProgress(stage: "waiting", message: "Waiting for print server", progress: nil)
+        persist()
+        run(jobs[index], submit: true)
+    }
+
     func retry(_ job: PrintJob) {
         guard canRetry(job) else { return }
         if job.retryFromStart || job.baseURL != PrintService.configuredBaseURL {
@@ -146,6 +175,10 @@ final class PrintJobManager: ObservableObject {
         jobs.removeAll { $0.id == job.id }
         inputs.removeValue(forKey: job.id)
         uploads.removeValue(forKey: job.id)
+        uploadConfirmations.removeValue(forKey: job.id)
+        confirmedJobs.remove(job.id)
+        shownUploads.remove(job.id)
+        shownResults.remove(job.id)
         tokens.removeValue(forKey: job.id)
         PrintBackgroundDownload.shared.cancel(id: job.id)
         downloads.remove(job.id)
@@ -167,7 +200,9 @@ final class PrintJobManager: ObservableObject {
             PrintBackgroundDownload.shared.connect { ids in
                 Task { @MainActor in
                     self.downloads.formUnion(ids)
-                    for job in self.jobs where !job.isFinished && self.tasks[job.id] == nil { self.run(job, submit: false) }
+                    for job in self.jobs where !job.isFinished && self.tasks[job.id] == nil && self.uploadConfirmations[job.id] == nil {
+                        self.run(job, submit: false)
+                    }
                 }
             }
         }
@@ -208,6 +243,14 @@ final class PrintJobManager: ObservableObject {
                     let accepted = jobs.first(where: { $0.id == job.id })?.accepted ?? false
                     uploaded = resend && !accepted && inputs[job.id] != nil
                     if uploaded, let input = inputs[job.id] {
+                        if !confirmedJobs.contains(job.id), let state = uploads[job.id],
+                           let references = try await service.prepareUploads(for: input, jobID: job.id, state: state, onProgress: progress) {
+                            guard !Task.isCancelled else { return }
+                            tasks[job.id] = nil
+                            uploadConfirmations[job.id] = references
+                            persist()
+                            return
+                        }
                         url = try await service.requestSTL(for: input, name: job.id, in: Self.directory, jobID: job.id, uploads: uploads[job.id], onProgress: progress) { _ in
                             Task { @MainActor in
                                 guard let index = self.jobs.firstIndex(where: { $0.id == job.id }) else { return }
@@ -330,7 +373,8 @@ final class PrintJobManager: ObservableObject {
     }
 
     private func persist() {
-        if let data = try? JSONEncoder().encode(jobs) { defaults.set(data, forKey: "printJobs") }
+        let resumable = jobs.filter { uploadConfirmations[$0.id] == nil }
+        if let data = try? JSONEncoder().encode(resumable) { defaults.set(data, forKey: "printJobs") }
     }
 }
 

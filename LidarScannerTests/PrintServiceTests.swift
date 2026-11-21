@@ -815,6 +815,62 @@ final class PrintServiceTests: XCTestCase {
         XCTAssertFalse(body.contains("filename="))
     }
 
+    func testPrepareConfirmsUploadedPhotoWithoutSubmittingAndResultUsesSignedSTL() async throws {
+        let uploader = FakeUploader()
+        let client = try service(token: "abc", signedUploads: true, uploader: uploader)
+        let input = PrintInput.photo(Data("jpeg".utf8), heightMM: 10)
+        let state = PrintUploadState()
+        var calls: [String] = []
+        StubProtocol.handler = { request in
+            let path = request.url!.path
+            calls.append("\(request.httpMethod!) \(path)")
+            switch path {
+            case "/print/uploads":
+                return (200, "application/json", Data(#"{"job_id":"job-1","uploads":{"photo":{"url":"https://s3.test/bucket/job-1/photo","method":"PUT","file_id":"job-1/photo","get_url":"https://s3.test/preview?old=1"}}}"#.utf8))
+            case "/print/uploads/job-1":
+                XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer abc")
+                XCTAssertEqual(uploader.puts.map(\.name), ["photo"])
+                return (200, "application/json", Data(#"{"job_id":"job-1","uploads":{"photo":{"file_id":"job-1/photo","get_url":"https://s3.test/preview?fresh=1"}}}"#.utf8))
+            case "/print":
+                XCTAssertTrue(String(decoding: Self.body(of: request), as: UTF8.self).contains("name=\"uploaded\"\r\n\r\nphoto"))
+                return (200, "application/x-ndjson", Data((#"{"type":"done","stl_url":"https://s3.test/result.stl?signature=1","stl_file_id":"job-1/result.stl","stl_expires_in":900}"# + "\n").utf8))
+            case "/result.stl":
+                XCTAssertNil(request.value(forHTTPHeaderField: "Authorization"))
+                XCTAssertEqual(request.url?.query, "signature=1")
+                return (200, "model/stl", Data("signed STL".utf8))
+            default:
+                XCTFail("unexpected request: \(path)")
+                return (404, "application/json", Data())
+            }
+        }
+        let saved = try await client.prepareUploads(for: input, jobID: "job-1", state: state, onProgress: { _ in })
+        XCTAssertEqual(saved?["photo"]?.file_id, "job-1/photo")
+        XCTAssertEqual(saved?["photo"]?.get_url.query, "fresh=1")
+        XCTAssertEqual(calls, ["POST /print/uploads", "GET /print/uploads/job-1"])
+
+        let result = try await client.requestSTL(for: input, name: "photo", in: directory, jobID: "job-1", uploads: state)
+        XCTAssertEqual(try Data(contentsOf: result), Data("signed STL".utf8))
+        XCTAssertEqual(uploader.puts.count, 1)
+        XCTAssertEqual(calls, ["POST /print/uploads", "GET /print/uploads/job-1", "POST /print", "GET /result.stl"])
+    }
+
+    func testSTLPreviewParsesASCIITrianglesAndRejectsEmptyMeshes() throws {
+        let mesh = try XCTUnwrap(STLMesh(data: Data("""
+        solid sample
+          facet normal 0 0 1
+            outer loop
+              vertex 10 10 10
+              vertex 20 10 10
+              vertex 10 20 10
+            endloop
+          endfacet
+        endsolid sample
+        """.utf8)))
+        XCTAssertEqual(mesh.vertices, [SIMD3(-0.5, -0.5, 0), SIMD3(0.5, -0.5, 0), SIMD3(-0.5, 0.5, 0)])
+        XCTAssertEqual(mesh.normals, Array(repeating: SIMD3(0, 0, 1), count: 3))
+        XCTAssertNil(STLMesh(data: Data("solid empty\nendsolid empty".utf8)))
+    }
+
     func testSignedUploadPutsEachFileWithReturnedHeadersThenSubmits() async throws {
         let uploader = FakeUploader()
         var calls: [String] = []
