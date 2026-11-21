@@ -41,9 +41,11 @@ Printing runs as an app-wide job: you can close the photo screen, return Home, o
 Room/Object scan while it works. A compact banner follows you across screens. Tap
 **STL ready — Share** when finished to send the file to a slicer or *Save to Files*.
 
-Set the server and token in **Settings** (gear icon on the home screen). The default server is `https://slesvci--3d-print-web.us-east.modal.run`, set by `PRINT_BASE_URL` in `project.yml`; the token (`PRINT_API_TOKEN`) is kept in the Keychain. The app calls:
+Set the server and token in **Settings** (gear icon on the home screen). The default server is `https://slesvci--3d-print-web.us-east.modal.run`, set by `PRINT_BASE_URL` in `project.yml`; the token (`PRINT_API_TOKEN`) is kept in the Keychain.
 
 **Settings > Print Options > Save print material** is off by default. Turn it on with a compatible server to request topology optimisation for new Object Scan and Photo Print jobs. The STL result shows the reported reduction in model volume or why the server skipped optimisation. A volume reduction does not validate a part for use under load.
+
+The app calls:
 
 ```
 POST {server}/print   multipart/form-data, Authorization: Bearer <token>

@@ -256,8 +256,8 @@ final class LidarScannerUITests: XCTestCase {
     func testObjectPrintCanOptInToMaterialSavings() throws {
         try requirePrintStub()
         let app = launch(["-UITestSeedSampleScans", "-printBaseURL", Self.stubURL, "-printAPIToken", Self.stubToken])
-        enableMaterialSavings(in: app, takeScreenshot: true)
         defer { app.terminate(); disableMaterialSavings() }
+        enableMaterialSavings(in: app, takeScreenshot: true)
 
         openMyScans(in: app)
         let printButton = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'print-Object '")).firstMatch
@@ -277,8 +277,8 @@ final class LidarScannerUITests: XCTestCase {
     func testMultipartPhotoPrintExplainsSkippedOptimisation() throws {
         try requirePrintStub()
         let app = launch(["-UITestFakePhotoCapture", "-UITestFakePitch", "5", "-printBaseURL", Self.stubHost + "/legacy-skipopt", "-printAPIToken", Self.stubToken])
-        enableMaterialSavings(in: app)
         defer { app.terminate(); disableMaterialSavings() }
+        enableMaterialSavings(in: app)
 
         app.buttons["photoPrintButton"].tap()
         let capture = app.buttons["takePhotoAndPrintButton"]
@@ -299,7 +299,7 @@ final class LidarScannerUITests: XCTestCase {
         let toggle = app.switches["printOptimiseToggle"]
         XCTAssertTrue(toggle.waitForExistence(timeout: 5))
         XCTAssertEqual(toggle.value as? String, "0")
-        toggle.tap()
+        tapSwitchControl(toggle)
         XCTAssertEqual(toggle.value as? String, "1")
         if takeScreenshot { savePrintScreenshot("material-savings-setting", app: app) }
         app.buttons["settingsDoneButton"].tap()
@@ -309,7 +309,12 @@ final class LidarScannerUITests: XCTestCase {
         let app = launch()
         app.buttons["settingsButton"].tap()
         let toggle = app.switches["printOptimiseToggle"]
-        if toggle.value as? String == "1" { toggle.tap() }
+        if toggle.value as? String == "1" { tapSwitchControl(toggle) }
+    }
+
+    private func tapSwitchControl(_ toggle: XCUIElement) {
+        // SwiftUI exposes the full row; only the trailing switch changes the value.
+        toggle.coordinate(withNormalizedOffset: CGVector(dx: 0.94, dy: 0.5)).tap()
     }
 
     func testPrintSavesSTLWithItsSourceScan() throws {
