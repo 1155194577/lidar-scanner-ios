@@ -63,29 +63,36 @@ struct HomeView: View {
                 }
             }
         }
-        .sheet(isPresented: $showsSettings) { SettingsView() }
+        .printJobBanner(visible: activeMode == nil && !showsPhotoPrint && !showsSettings)
+        .sheet(isPresented: $showsSettings) { SettingsView().printJobBanner() }
         .fullScreenCover(isPresented: $showsPhotoPrint) {
-            if DeviceSupport.photoPrint {
-                PhotoPrintView()
-            } else {
-                UnsupportedView(feature: "Photo Print", requirement: "an iPhone or iPad with a LiDAR sensor")
+            Group {
+                if DeviceSupport.photoPrint {
+                    PhotoPrintView()
+                } else {
+                    UnsupportedView(feature: "Photo Print", requirement: "an iPhone or iPad with a LiDAR sensor")
+                }
             }
+            .printJobBanner()
         }
         .fullScreenCover(item: $activeMode, onDismiss: store.reload) { kind in
-            switch kind {
-            case .room:
-                if DeviceSupport.roomScan {
-                    RoomScanView()
-                } else {
-                    UnsupportedView(feature: "Room Scan", requirement: "an iPhone or iPad with a LiDAR sensor")
-                }
-            case .object:
-                if DeviceSupport.objectScan {
-                    ObjectScanView()
-                } else {
-                    UnsupportedView(feature: "Object Scan", requirement: "an iPhone or iPad with a LiDAR sensor and an A14 chip or newer")
+            Group {
+                switch kind {
+                case .room:
+                    if DeviceSupport.roomScan {
+                        RoomScanView()
+                    } else {
+                        UnsupportedView(feature: "Room Scan", requirement: "an iPhone or iPad with a LiDAR sensor")
+                    }
+                case .object:
+                    if DeviceSupport.objectScan {
+                        ObjectScanView()
+                    } else {
+                        UnsupportedView(feature: "Object Scan", requirement: "an iPhone or iPad with a LiDAR sensor and an A14 chip or newer")
+                    }
                 }
             }
+            .printJobBanner()
         }
     }
 }
