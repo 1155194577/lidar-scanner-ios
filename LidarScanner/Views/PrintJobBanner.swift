@@ -10,8 +10,8 @@ private struct PrintJobBannerModifier: ViewModifier {
     @State private var selected: PrintedModel?
 
     func body(content: Content) -> some View {
-        content
-            .safeAreaInset(edge: .bottom, spacing: 0) {
+        VStack(spacing: 0) {
+            content
                 if visible, !manager.jobs.isEmpty {
                     ScrollView {
                         VStack(spacing: 8) {
@@ -62,7 +62,7 @@ private struct PrintJobBannerModifier: ViewModifier {
                     .frame(height: manager.jobs.count > 1 ? 220 : 130)
                     .accessibilityIdentifier("printJobBanner")
                 }
-            }
+        }
             .sheet(item: $selected) { model in
                 PrintResultView(model: model)
             }

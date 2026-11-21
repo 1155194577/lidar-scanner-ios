@@ -27,6 +27,37 @@ final class LidarScannerUITests: XCTestCase {
         XCTAssertEqual(app.staticTexts["scanCount"].label, "0")
     }
 
+    func testHomeRowsRemainTappableWithRunningPrint() throws {
+        try assertHomeRowsRemainTappableWithPrint(finished: false)
+    }
+
+    func testHomeRowsRemainTappableWithFinishedPrint() throws {
+        try assertHomeRowsRemainTappableWithPrint(finished: true)
+    }
+
+    private func assertHomeRowsRemainTappableWithPrint(finished: Bool) throws {
+        try requirePrintStub()
+        let app = launch(["-UITestSeedSampleScans", "-printBaseURL", Self.stubURL, "-printAPIToken", Self.stubToken])
+        app.buttons["myScansLink"].tap()
+        app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'print-Room '")).firstMatch.tap()
+        XCTAssertTrue(app.scrollViews["printJobBanner"].waitForExistence(timeout: 5))
+        if finished {
+            XCTAssertTrue(app.buttons["printResultButton"].firstMatch.waitForExistence(timeout: 30))
+        }
+        app.navigationBars.buttons.element(boundBy: 0).tap()
+        XCTAssertTrue(app.navigationBars["LiDAR Scanner"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.scrollViews["printJobBanner"].exists)
+        if !finished {
+            XCTAssertTrue(app.progressIndicators["printProgressBar"].exists)
+        }
+        saveScreenshot(app, name: finished ? "home-banner-finished" : "home-banner-running")
+        for identifier in ["roomScanButton", "objectScanButton", "photoPrintButton", "faceScanButton", "settingsButton", "myScansLink"] {
+            XCTAssertTrue(app.buttons[identifier].isHittable, "Home row \(identifier) is blocked by the banner")
+        }
+        app.buttons["myScansLink"].tap()
+        XCTAssertTrue(app.navigationBars["My Scans"].waitForExistence(timeout: 5))
+    }
+
     func testRoomScanExplainsMissingLiDAR() {
         let app = launch(["-UITestForceUnsupported"])
         app.buttons["roomScanButton"].tap()
