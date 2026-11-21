@@ -854,6 +854,55 @@ final class PrintServiceTests: XCTestCase {
         XCTAssertEqual(calls, ["POST /print/uploads", "GET /print/uploads/job-1", "POST /print", "GET /result.stl"])
     }
 
+    func testPartialConfirmationRetriesOnlyMissingUploads() async throws {
+        let uploader = FakeUploader()
+        let client = try service(signedUploads: true, uploader: uploader)
+        let input = PrintInput.photo(Data("jpeg".utf8), heightMM: 10, depth: Self.depth)
+        let state = PrintUploadState()
+        let names = ["photo", "depth", "depth_confidence"]
+        var planned: [Set<String>] = []
+        var confirmations = 0
+        StubProtocol.handler = { request in
+            if request.httpMethod == "POST" {
+                XCTAssertEqual(request.url?.path, "/print/uploads")
+                guard let body = try? JSONSerialization.jsonObject(with: Self.body(of: request)) as? [String: Any],
+                      let files = body["files"] as? [String: Any] else {
+                    XCTFail("Expected an upload plan request")
+                    return (400, "application/json", Data())
+                }
+                planned.append(Set(files.keys))
+                let slots = files.keys.map { name in
+                    """
+                    "\(name)":{"url":"https://s3.test/\(name)","file_id":"job-1/\(name)","get_url":"https://s3.test/preview/\(name)"}
+                    """
+                }.joined(separator: ",")
+                return (200, "application/json", Data("{\"uploads\":{\(slots)}}".utf8))
+            }
+            XCTAssertEqual(request.url?.path, "/print/uploads/job-1")
+            confirmations += 1
+            let stored = names.filter { confirmations > 1 || $0 != "depth" }
+            let references = stored.map { name in
+                """
+                "\(name)":{"file_id":"job-1/\(name)","get_url":"https://s3.test/preview/\(name)"}
+                """
+            }.joined(separator: ",")
+            return (200, "application/json", Data("{\"files\":{\(references)}}".utf8))
+        }
+
+        do {
+            _ = try await client.prepareUploads(for: input, jobID: "job-1", state: state, onProgress: { _ in })
+            XCTFail("Expected confirmation to reject the missing depth file")
+        } catch PrintError.unexpectedResponse(let detail) {
+            XCTAssertEqual(detail, "missing uploaded files")
+        }
+        XCTAssertEqual(state.uploadedNames, ["photo", "depth_confidence"])
+
+        let result = try await client.prepareUploads(for: input, jobID: "job-1", state: state, onProgress: { _ in })
+        XCTAssertEqual(Set(try XCTUnwrap(result).keys), Set(names))
+        XCTAssertEqual(planned, [Set(names), ["depth"]])
+        XCTAssertEqual(uploader.puts.map(\.name), names + ["depth"])
+    }
+
     func testConfirmedUploadsAcceptsLegacyUploadsEnvelope() async throws {
         let client = try service(token: "abc")
         StubProtocol.handler = { request in

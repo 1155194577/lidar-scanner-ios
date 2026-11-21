@@ -282,7 +282,9 @@ struct PrintService {
             state.forget(files.map(\.name))
             throw PrintError.server(status: status, message: message)
         }
-        guard files.allSatisfy({ references[$0.name] != nil }) else {
+        let missing = files.map(\.name).filter { references[$0] == nil }
+        guard missing.isEmpty else {
+            state.forget(missing)
             throw PrintError.unexpectedResponse("missing uploaded files")
         }
         return references
