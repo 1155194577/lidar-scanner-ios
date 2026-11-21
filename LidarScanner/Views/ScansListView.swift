@@ -57,15 +57,18 @@ struct ScansListView: View {
                     }
                 } icon: {
                     Image(systemName: scan.kind.systemImage)
+                        .foregroundStyle(Color.accentColor)
                 }
                 Spacer()
                 ShareLink(item: scan.url) {
                     Image(systemName: "square.and.arrow.up")
+                        .foregroundStyle(Color.accentColor)
                 }
                 .buttonStyle(.borderless)
                 .accessibilityIdentifier("share-\(scan.name)")
             }
         }
+        .buttonStyle(.plain)
         .accessibilityIdentifier("scan-\(scan.name)")
         .swipeActions {
             Button(role: .destructive) {
