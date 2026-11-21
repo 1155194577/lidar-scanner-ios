@@ -484,6 +484,24 @@ final class LidarScannerUITests: XCTestCase {
         app.buttons["myScansLink"].tap()
     }
 
+    /// Runs a fake face capture against the deployed endpoint only when `TEST_RUNNER_PRINT_LIVE_URL` and `TEST_RUNNER_PRINT_LIVE_TOKEN` are set.
+    func testLiveFacePrint() throws {
+        let environment = ProcessInfo.processInfo.environment
+        guard let url = environment["PRINT_LIVE_URL"], let token = environment["PRINT_LIVE_TOKEN"], !url.isEmpty, !token.isEmpty else {
+            throw XCTSkip("set TEST_RUNNER_PRINT_LIVE_URL and TEST_RUNNER_PRINT_LIVE_TOKEN to test the live endpoint")
+        }
+        let app = launch(["-UITestResetScans", "-UITestFakeFaceCapture", "-printBaseURL", url, "-printAPIToken", token])
+        app.buttons["faceScanButton"].tap()
+        XCTAssertTrue(app.staticTexts["bustHeight"].waitForExistence(timeout: 5))
+        app.buttons["captureFaceButton"].tap()
+        openPrintResult(in: app, timeout: 600)
+        let save = app.buttons["Save to My Scans"]
+        XCTAssertTrue(save.waitForExistence(timeout: 15))
+        attachScreenshot(app, name: "live-face-stl")
+        save.tap()
+        XCTAssertTrue(app.staticTexts["Saved to My Scans"].waitForExistence(timeout: 5))
+    }
+
     /// Waits for a print job in the banner to finish, then opens its Save / Share sheet.
     private func openPrintResult(in app: XCUIApplication, timeout: TimeInterval) {
         let result = app.buttons["printResultButton"].firstMatch

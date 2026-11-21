@@ -570,6 +570,38 @@ final class PrintServiceTests: XCTestCase {
     }
 
     @MainActor
+    func testRejectedJobWithoutInputOffersNoRetryAfterRelaunch() async throws {
+        let suite = "PrintJobs-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        var requests = 0
+        StubProtocol.handler = { _ in
+            requests += 1
+            return (400, "application/json", Data(#"{"detail":"bad face upload"}"#.utf8))
+        }
+        let manager = PrintJobManager(defaults: defaults, notifications: false, makeService: { _, _ in try self.service() })
+        manager.start(input: .photo(Data([1]), heightMM: 10), name: "Rejected", kind: "photo")
+        let failed = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in manager.jobs.first?.error != nil }, object: nil)
+        await fulfillment(of: [failed], timeout: 2)
+        let job = try XCTUnwrap(manager.jobs.first)
+        XCTAssertTrue(job.rejected)
+        XCTAssertEqual(job.error, "The print server returned HTTP 400: bad face upload")
+        XCTAssertTrue(manager.canRetry(job))
+
+        let restored = PrintJobManager(defaults: defaults, notifications: false, makeService: { _, _ in try self.service() })
+        let restoredJob = try XCTUnwrap(restored.jobs.first)
+        XCTAssertTrue(restoredJob.rejected)
+        XCTAssertFalse(restored.canRetry(restoredJob))
+        let sent = requests
+        restored.retry(restoredJob)
+        try await Task.sleep(for: .milliseconds(200))
+        XCTAssertEqual(requests, sent)
+        XCTAssertEqual(restored.jobs.first?.error, "The print server returned HTTP 400: bad face upload")
+        restored.dismiss(restoredJob)
+        manager.dismiss(job)
+    }
+
+    @MainActor
     func testRestoringOriginalServerAllowsInputlessJobToReconnect() async throws {
         let previous = UserDefaults.standard.object(forKey: PrintService.baseURLKey)
         defer { UserDefaults.standard.set(previous, forKey: PrintService.baseURLKey) }

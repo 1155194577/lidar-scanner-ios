@@ -17,12 +17,14 @@ struct PrintJob: Identifiable, Codable {
     var error: String?
     var accepted = false
     var retryFromStart = false
+    /// The server refused the submission (a 4xx other than 404/408/429), so it holds no job to re-attach to.
+    var rejected = false
     var isFinished: Bool { result != nil || error != nil }
 }
 
 extension PrintJob {
     private enum CodingKeys: String, CodingKey {
-        case id, name, kind, baseURL, sourceScanFileName, progress, resultPath, result, error, accepted, retryFromStart
+        case id, name, kind, baseURL, sourceScanFileName, progress, resultPath, result, error, accepted, retryFromStart, rejected
     }
 
     init(from decoder: Decoder) throws {
@@ -41,6 +43,7 @@ extension PrintJob {
         error = try values.decodeIfPresent(String.self, forKey: .error)
         accepted = try values.decodeIfPresent(Bool.self, forKey: .accepted) ?? false
         retryFromStart = try values.decodeIfPresent(Bool.self, forKey: .retryFromStart) ?? false
+        rejected = try values.decodeIfPresent(Bool.self, forKey: .rejected) ?? false
         if error == PrintError.serverChanged.localizedDescription { retryFromStart = false }
     }
 
@@ -56,6 +59,7 @@ extension PrintJob {
         try values.encodeIfPresent(error, forKey: .error)
         try values.encode(accepted, forKey: .accepted)
         try values.encode(retryFromStart, forKey: .retryFromStart)
+        try values.encode(rejected, forKey: .rejected)
     }
 }
 
@@ -104,7 +108,8 @@ final class PrintJobManager: ObservableObject {
     }
 
     func canRetry(_ job: PrintJob) -> Bool {
-        !(job.retryFromStart || job.baseURL != PrintService.configuredBaseURL) || inputs[job.id] != nil
+        if job.rejected && inputs[job.id] == nil { return false }
+        return !(job.retryFromStart || job.baseURL != PrintService.configuredBaseURL) || inputs[job.id] != nil
     }
 
     func printedModel(for job: PrintJob) -> PrintedModel? {
@@ -128,6 +133,7 @@ final class PrintJobManager: ObservableObject {
         guard let index = jobs.firstIndex(where: { $0.id == job.id }) else { return }
         tokens[job.id] = currentToken()
         jobs[index].error = nil
+        jobs[index].rejected = false
         jobs[index].progress = PrintProgress(stage: "reconnecting", message: "Reconnecting to print server", progress: nil)
         persist()
         run(jobs[index], submit: inputs[job.id] != nil)
@@ -286,6 +292,10 @@ final class PrintJobManager: ObservableObject {
             if case PrintError.jobFailed = error { jobs[index].retryFromStart = true }
             if case PrintError.invalidBaseURL = error { jobs[index].retryFromStart = true }
             if case PrintError.server(422, _) = error { jobs[index].retryFromStart = true }
+            if case PrintError.server(let status, _) = error, (400..<500).contains(status),
+               ![404, 408, 429].contains(status), !jobs[index].accepted {
+                jobs[index].rejected = true
+            }
         }
         persist()
         tasks.removeValue(forKey: id)?.cancel()
