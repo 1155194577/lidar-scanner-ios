@@ -17,7 +17,9 @@ enum LaunchArguments {
             store.deleteAll()
         }
         if contains(seedSampleScans) {
-            store.seedSamples()
+            let fixture = ProcessInfo.processInfo.environment["UITestUSDZFixture"]
+                .flatMap { Data(base64Encoded: $0) }
+            store.seedSamples(contents: fixture)
         }
     }
 }

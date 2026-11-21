@@ -1,0 +1,28 @@
+#usda 1.0
+(
+    defaultPrim = "Root"
+    metersPerUnit = 0.01
+    upAxis = "Y"
+)
+
+def Xform "Root" {
+    def Xform "Original" {
+        double3 xformOp:translate = (10, 20, 30)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+
+        def Mesh "Quad" {
+            int[] faceVertexCounts = [4]
+            int[] faceVertexIndices = [0, 1, 2, 3]
+            point3f[] points = [(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0)]
+            uniform token subdivisionScheme = "none"
+        }
+    }
+
+    def Xform "Mirrored" (
+        prepend references = </Root/Original>
+    ) {
+        double3 xformOp:translate = (-10, 20, 30)
+        float3 xformOp:scale = (-1, 1, 1)
+        uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+    }
+}
