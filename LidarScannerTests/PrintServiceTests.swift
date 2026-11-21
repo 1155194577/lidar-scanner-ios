@@ -493,6 +493,35 @@ final class PrintServiceTests: XCTestCase {
         manager.dismiss(manager.jobs[0])
     }
 
+    @MainActor
+    func testRestoringOriginalServerAllowsInputlessJobToReconnect() async throws {
+        let previous = UserDefaults.standard.object(forKey: PrintService.baseURLKey)
+        defer { UserDefaults.standard.set(previous, forKey: PrintService.baseURLKey) }
+        UserDefaults.standard.set("http://different.print.test", forKey: PrintService.baseURLKey)
+        let suite = "PrintJobs-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        var job = PrintJob(id: UUID().uuidString, name: "Restore settings", kind: "photo", baseURL: "http://print.test")
+        job.error = PrintError.serverChanged.localizedDescription
+        job.retryFromStart = true
+        defaults.set(try JSONEncoder().encode([job]), forKey: "printJobs")
+        let manager = PrintJobManager(defaults: defaults, notifications: false, makeService: { _, _ in try self.service() })
+        XCTAssertFalse(manager.canRetry(manager.jobs[0]))
+        UserDefaults.standard.set("http://print.test", forKey: PrintService.baseURLKey)
+        XCTAssertTrue(manager.canRetry(manager.jobs[0]))
+        StubProtocol.handler = { request in
+            XCTAssertEqual(request.httpMethod, "GET")
+            XCTAssertEqual(request.url?.path, "/print/\(job.id)")
+            return (200, "application/x-ndjson", Data((#"{"type":"done","stl_base64":"c3Rs"}"# + "\n").utf8))
+        }
+        manager.retry(manager.jobs[0])
+        let ready = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in manager.jobs.first?.result != nil }, object: nil)
+        await fulfillment(of: [ready], timeout: 2)
+        XCTAssertEqual(manager.jobs.first?.id, job.id)
+        XCTAssertNil(manager.jobs.first?.error)
+        manager.dismiss(manager.jobs[0])
+    }
+
     func testPersistedResultUsesRelativePathAndMigratesOldContainer() throws {
         let legacy = #"{"id":"job","name":"Cube","kind":"photo","baseURL":"http://print.test","result":"file:///old-container/Library/Application%20Support/PrintJobs/job/Cube.stl"}"#
         let job = try JSONDecoder().decode(PrintJob.self, from: Data(legacy.utf8))

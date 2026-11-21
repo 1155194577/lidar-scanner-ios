@@ -39,6 +39,7 @@ extension PrintJob {
         error = try values.decodeIfPresent(String.self, forKey: .error)
         accepted = try values.decodeIfPresent(Bool.self, forKey: .accepted) ?? false
         retryFromStart = try values.decodeIfPresent(Bool.self, forKey: .retryFromStart) ?? false
+        if error == PrintError.serverChanged.localizedDescription { retryFromStart = false }
     }
 
     func encode(to encoder: Encoder) throws {
@@ -276,7 +277,6 @@ final class PrintJobManager: ObservableObject {
             jobs[index].error = PrintService.failureMessage(error)
             if case PrintError.jobFailed = error { jobs[index].retryFromStart = true }
             if case PrintError.invalidBaseURL = error { jobs[index].retryFromStart = true }
-            if case PrintError.serverChanged = error { jobs[index].retryFromStart = true }
             if case PrintError.server(422, _) = error { jobs[index].retryFromStart = true }
         }
         persist()
