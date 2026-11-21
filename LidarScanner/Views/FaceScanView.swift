@@ -11,14 +11,6 @@ struct FaceScanView: View {
     var body: some View {
         NavigationStack {
             ZStack {
-                if model.isFake {
-                    Image(uiImage: FaceScanModel.sampleImage)
-                        .resizable()
-                        .scaledToFill()
-                        .ignoresSafeArea()
-                } else {
-                    FaceARView(model: model).ignoresSafeArea()
-                }
                 VStack {
                     Text(model.instruction)
                         .font(.headline)
@@ -30,6 +22,8 @@ struct FaceScanView: View {
                     controls
                 }
                 .padding()
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background { cameraPreview.ignoresSafeArea() }
                 if model.isPrinting {
                     VStack(spacing: 16) {
                         ProgressView().controlSize(.large)
@@ -59,6 +53,19 @@ struct FaceScanView: View {
             } message: {
                 Text(model.errorMessage ?? "")
             }
+        }
+    }
+
+    @ViewBuilder private var cameraPreview: some View {
+        if model.isFake {
+            Color.black.overlay {
+                Image(uiImage: FaceScanModel.sampleImage)
+                    .resizable()
+                    .scaledToFill()
+            }
+            .clipped()
+        } else {
+            FaceARView(model: model)
         }
     }
 

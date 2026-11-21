@@ -31,7 +31,7 @@ Apps signed with a free Personal Team expire after 7 days; reconnect the phone a
 
 - **Room Scan:** tap *Room Scan*, walk slowly around the room pointing the phone at walls, floor and furniture, tap **Done**, then **Save Scan**.
 - **Photo Print:** point the phone at an object, tap where it sits on the surface, then tap its top. The app measures the height with LiDAR; tap **Take Photo & Print** to send one photo plus that height to the print server, which builds the model from the photo and scales it to the measured height.
-- **Face Scan:** needs Face ID (the front TrueDepth camera). Hold the phone at arm's length, look straight at the screen, set the bust height (default 100 mm) and tap **Capture Face & Print**. The app sends the front-camera photo, its TrueDepth depth map, the camera and face poses and the ARKit face mesh with `mode=face`; the print server fills in the back of the head and returns a bust STL.
+- **Face Scan:** needs Face ID (the front TrueDepth camera). Hold the phone at arm's length, look straight at the screen, set the bust height (default 100 mm) and tap **Capture Face & Print**. The app sends the front-camera photo, its TrueDepth depth map, the camera and face poses and the ARKit face mesh with `mode=face`; the print server fills in the back of the head and returns a bust STL. Save the bust to keep it under **Face Prints** in My Scans, or share the STL.
 - **Object Scan:** put the object on a plain surface with room to walk around it. Tap **Continue**, fit the box around the object, tap **Start Capture** and circle it slowly. When the pass completes, do **Another Pass** (e.g. with the object flipped) or **Finish**. The model is then built on the phone, which takes a few minutes.
 
 ## Printing a scan
