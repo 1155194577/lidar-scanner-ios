@@ -429,7 +429,7 @@ final class LidarScannerUITests: XCTestCase {
 
     func testPhotoPrintFallsBackToMultipartWhenStorageDeniesEveryUpload() throws {
         try requirePrintStub()
-        try printPhoto(baseURL: Self.stubURL + "/deny")
+        try printPhoto(baseURL: Self.stubHost + "/deny")
         let received = try lastStubRequest()
         XCTAssertNil(received["uploaded"])
         XCTAssertTrue((received["fields"] as? [String])?.contains("photo") ?? false, "the photo should go in the multipart POST")
@@ -703,7 +703,7 @@ final class LidarScannerUITests: XCTestCase {
         return try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: Any], "GET /last returned no JSON")
     }
 
-    private static let stubHost = "http://127.0.0.1:8765"
+    private static let stubHost = ProcessInfo.processInfo.environment["PRINT_STUB_URL"] ?? "http://127.0.0.1:8765"
     private static let stubURL = stubHost + "/compat"
     private static let stubToken = "stub-token"
 

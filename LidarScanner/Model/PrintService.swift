@@ -260,7 +260,7 @@ struct PrintService {
         guard signedUploads, !state.legacy else { return nil }
         let files = try payload(for: input).files
         let pending = files.filter { !state.isUploaded($0.name) }
-        if !pending.isEmpty, !(try await upload(pending, jobID: jobID, state: state, onProgress: onProgress)) {
+        if !pending.isEmpty, !(try await uploadOrFallBack(pending, jobID: jobID, state: state, onProgress: onProgress)) {
             state.legacy = true
             return nil
         }

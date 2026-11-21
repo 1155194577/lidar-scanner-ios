@@ -854,6 +854,35 @@ final class PrintServiceTests: XCTestCase {
         XCTAssertEqual(calls, ["POST /print/uploads", "GET /print/uploads/job-1", "POST /print", "GET /result.stl"])
     }
 
+    func testPreflightStorageDenialSkipsConfirmationAndUsesMultipart() async throws {
+        let uploader = FakeUploader()
+        uploader.statuses = ["photo": [403, 403, 403]]
+        let client = try service(signedUploads: true, uploader: uploader)
+        let input = PrintInput.photo(Data("jpeg".utf8), heightMM: 10)
+        let state = PrintUploadState()
+        var calls: [String] = []
+        StubProtocol.handler = { request in
+            let path = request.url!.path
+            calls.append(path)
+            if path == "/print/uploads" {
+                return (200, "application/json", Data(#"{"uploads":{"photo":{"url":"https://s3.test/photo","file_id":"job-1/photo","get_url":"https://s3.test/preview"}}}"#.utf8))
+            }
+            let body = String(decoding: Self.body(of: request), as: UTF8.self)
+            XCTAssertEqual(path, "/print")
+            XCTAssertTrue(body.contains("name=\"photo\"; filename=\"photo.jpg\""))
+            XCTAssertFalse(body.contains("name=\"uploaded\""))
+            return (200, "model/stl", Data("stl".utf8))
+        }
+        let preview = try await client.prepareUploads(for: input, jobID: "job-1", state: state, onProgress: { _ in })
+        XCTAssertNil(preview)
+        XCTAssertTrue(state.legacy)
+        XCTAssertEqual(calls, Array(repeating: "/print/uploads", count: 3))
+
+        _ = try await client.requestSTL(for: input, name: "denied", in: directory, jobID: "job-1", uploads: state)
+        XCTAssertEqual(calls, ["/print/uploads", "/print/uploads", "/print/uploads", "/print"])
+        XCTAssertEqual(uploader.puts.count, 3)
+    }
+
     func testSTLPreviewParsesASCIITrianglesAndRejectsEmptyMeshes() throws {
         let mesh = try XCTUnwrap(STLMesh(data: Data("""
         solid sample
