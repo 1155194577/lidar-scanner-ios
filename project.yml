@@ -23,12 +23,17 @@ targets:
         GENERATE_INFOPLIST_FILE: YES
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+        PRINT_BASE_URL: http://localhost:8765
     info:
       path: LidarScanner/Info.plist
       properties:
         CFBundleDisplayName: LiDAR Scanner
         CFBundleShortVersionString: $(MARKETING_VERSION)
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        PrintBaseURL: $(PRINT_BASE_URL)
+        NSAppTransportSecurity:
+          NSAllowsLocalNetworking: true
+        NSLocalNetworkUsageDescription: Print sends scans to the print server you set in Settings, which can be on your local network.
         NSCameraUsageDescription: The camera and LiDAR sensor are used to capture 3D scans of rooms and objects.
         UIFileSharingEnabled: true
         LSSupportsOpeningDocumentsInPlace: true

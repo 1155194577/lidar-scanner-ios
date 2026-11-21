@@ -24,8 +24,17 @@
 	<false/>
 	<key>LSSupportsOpeningDocumentsInPlace</key>
 	<true/>
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsLocalNetworking</key>
+		<true/>
+	</dict>
 	<key>NSCameraUsageDescription</key>
 	<string>The camera and LiDAR sensor are used to capture 3D scans of rooms and objects.</string>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Print sends scans to the print server you set in Settings, which can be on your local network.</string>
+	<key>PrintBaseURL</key>
+	<string>$(PRINT_BASE_URL)</string>
 	<key>UIFileSharingEnabled</key>
 	<true/>
 	<key>UILaunchScreen</key>
