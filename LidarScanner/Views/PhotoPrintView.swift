@@ -108,7 +108,6 @@ final class PhotoPrintModel: ObservableObject {
     let isFake: Bool
     weak var arView: ARView?
     private var markers: [AnchorEntity] = []
-    private var tapPoints: [CGPoint] = []
     private var printTask: Task<Void, Never>?
 
     init(fake: Bool) {
@@ -142,7 +141,6 @@ final class PhotoPrintModel: ObservableObject {
         } else {
             top = position
         }
-        tapPoints.append(point)
         let anchor = AnchorEntity(world: position)
         anchor.addChild(ModelEntity(mesh: .generateSphere(radius: 0.008), materials: [SimpleMaterial(color: .systemTeal, isMetallic: false)]))
         arView.scene.addAnchor(anchor)
@@ -152,7 +150,6 @@ final class PhotoPrintModel: ObservableObject {
     func reset() {
         markers.forEach { $0.removeFromParent() }
         markers = []
-        tapPoints = []
         base = nil
         top = nil
     }
@@ -193,7 +190,7 @@ final class PhotoPrintModel: ObservableObject {
         guard let arView, let frame = arView.session.currentFrame else { return nil }
         let interface = arView.window?.windowScene?.interfaceOrientation ?? .portrait
         let orientation = Self.photoOrientation(for: interface)
-        let depth = frame.depthCapture(orientation: orientation, interface: interface, viewportSize: arView.bounds.size, taps: tapPoints)
+        let depth = frame.depthCapture(orientation: orientation, objectPoints: [base, top].compactMap { $0 })
         var image = CIImage(cvPixelBuffer: frame.capturedImage)
         if depth == nil { image = image.oriented(orientation) }
         guard let photo = CIContext().jpegRepresentation(of: image, colorSpace: CGColorSpace(name: CGColorSpace.sRGB)!, options: [:]) else { return nil }
@@ -239,16 +236,13 @@ final class PhotoPrintModel: ObservableObject {
 }
 
 private extension ARFrame {
-    func depthCapture(orientation: CGImagePropertyOrientation, interface: UIInterfaceOrientation, viewportSize: CGSize, taps: [CGPoint]) -> DepthCapture? {
+    func depthCapture(orientation: CGImagePropertyOrientation, objectPoints: [SIMD3<Float>]) -> DepthCapture? {
         guard let sceneDepth = smoothedSceneDepth ?? sceneDepth, let depth = Self.values(Float32.self, of: sceneDepth.depthMap) else { return nil }
         let k = camera.intrinsics
         let width = camera.imageResolution.width, height = camera.imageResolution.height
-        // View points -> normalized image coordinates -> photo pixels.
-        let toImage = displayTransform(for: interface, viewportSize: viewportSize).inverted()
-        let points = taps.map { tap -> CGPoint in
-            let normalized = CGPoint(x: tap.x / viewportSize.width, y: tap.y / viewportSize.height).applying(toImage)
-            return CGPoint(x: normalized.x * width, y: normalized.y * height)
-        }
+        // The measured world points projected into this frame, so they stay on the object if the phone moved since the taps.
+        // `.landscapeRight` is the sensor's native orientation, i.e. the unrotated photo's pixels.
+        let points = objectPoints.map { camera.projectPoint($0, orientation: .landscapeRight, viewportSize: camera.imageResolution) }
         let t = camera.transform
         return DepthCapture(
             depth: depth,

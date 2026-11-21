@@ -47,7 +47,7 @@ POST {server}/print   multipart/form-data, Authorization: Bearer <token>
     depth_confidence=<uint8 0/1/2>   image_orientation=<EXIF 1|3|6|8>
     intrinsics={"fx","fy","cx","cy","width","height"} (photo pixels)
     camera_transform=[16 floats, column-major camera-to-world, +Y up]
-    object_points=[[u,v] base, [u,v] top] (photo pixels)
+    object_points=[[u,v] base, [u,v] top] (measured points projected into the photo, pixels)
 → 200 model/stl  (X-Print-Report header); errors are JSON {"detail"}
 ```
 

@@ -24,7 +24,7 @@ struct DepthCapture: Equatable {
     var intrinsics: CameraIntrinsics
     /// Column-major camera-to-world matrix (ARKit camera axes: x right, y up, z towards the viewer); world +Y is up.
     var cameraTransform: [Float]
-    /// The user's taps on the object (base, then top), in photo pixels.
+    /// The measured base and top of the object, projected into the photo's pixels.
     var objectPoints: [CGPoint]
     /// How to rotate the photo upright (EXIF orientation 1, 3, 6 or 8).
     var imageOrientation: CGImagePropertyOrientation
