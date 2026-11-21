@@ -264,6 +264,9 @@ final class LidarScannerUITests: XCTestCase {
         app.otherElements["ActivityListView"].buttons["header.closeButton"].firstMatch.tapIfExists()
         app.swipeDown(velocity: .fast)
 
+        app.buttons["Dismiss"].firstMatch.tap()
+        XCTAssertFalse(app.buttons["printResultButton"].firstMatch.exists)
+
         app.navigationBars.buttons.element(boundBy: 0).tap()
         app.buttons["photoPrintButton"].tap()
         XCTAssertTrue(app.staticTexts["photoHeight"].waitForExistence(timeout: 5))
