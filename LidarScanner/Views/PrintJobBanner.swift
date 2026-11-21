@@ -27,8 +27,10 @@ private struct PrintJobBannerModifier: ViewModifier {
                                     if let error = job.error {
                                         Text(error).font(.subheadline).foregroundStyle(.red)
                                             .accessibilityIdentifier("printError")
-                                        Button("Retry") { manager.retry(job) }
-                                            .accessibilityIdentifier("retryPrintButton")
+                                        if manager.canRetry(job) {
+                                            Button("Retry") { manager.retry(job) }
+                                                .accessibilityIdentifier("retryPrintButton")
+                                        }
                                     } else if let url = job.result {
                                         Button { selected = PrintedModel(url: url) } label: {
                                             Label("STL ready — Share", systemImage: "square.and.arrow.up")

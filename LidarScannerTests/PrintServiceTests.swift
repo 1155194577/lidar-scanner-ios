@@ -248,6 +248,7 @@ final class PrintServiceTests: XCTestCase {
         let failed = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in manager.jobs.first?.error != nil }, object: nil)
         await fulfillment(of: [failed], timeout: 2)
         XCTAssertEqual(manager.jobs.first?.error, "Print server changed in Settings; print again")
+        XCTAssertFalse(manager.canRetry(manager.jobs[0]))
     }
 
     @MainActor
@@ -404,6 +405,33 @@ final class PrintServiceTests: XCTestCase {
         let ready = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in manager.jobs.first?.result != nil }, object: nil)
         await fulfillment(of: [ready], timeout: 2)
         XCTAssertEqual(manager.jobs.first?.id, job.id)
+        manager.dismiss(manager.jobs[0])
+    }
+
+    @MainActor
+    func testChangedServerRetryUsesNewSettingsWhenInputRemains() async throws {
+        let previous = UserDefaults.standard.object(forKey: PrintService.baseURLKey)
+        defer { UserDefaults.standard.set(previous, forKey: PrintService.baseURLKey) }
+        UserDefaults.standard.set("http://old.print.test", forKey: PrintService.baseURLKey)
+        let suite = "PrintJobs-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let manager = PrintJobManager(defaults: defaults, notifications: false, makeService: { job in
+            XCTAssertEqual(job.baseURL, "http://print.test")
+            return try self.service()
+        })
+        manager.start(input: .photo(Data([1]), heightMM: 10), name: "Changed", kind: "photo")
+        let id = manager.jobs[0].id
+        UserDefaults.standard.set("http://print.test", forKey: PrintService.baseURLKey)
+        manager.complete(id: id, result: .failure(PrintError.serverChanged))
+        let old = manager.jobs[0]
+        XCTAssertTrue(manager.canRetry(old))
+        StubProtocol.handler = { _ in (200, "model/stl", Data("stl".utf8)) }
+        manager.retry(old)
+        XCTAssertNotEqual(manager.jobs[0].id, id)
+        XCTAssertEqual(manager.jobs[0].baseURL, "http://print.test")
+        let ready = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in manager.jobs.first?.result != nil }, object: nil)
+        await fulfillment(of: [ready], timeout: 2)
         manager.dismiss(manager.jobs[0])
     }
 
