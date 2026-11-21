@@ -70,7 +70,7 @@ struct FaceCapture: Equatable {
     var heightMM: Double = FaceCapture.defaultHeightMM
 
     /// The multipart fields of the face contract, in upload order. `photo`, `depth` and `face_vertices` are files.
-    func addFields(to form: inout MultipartForm) throws {
+    func addFields<Form: PrintFormBuilder>(to form: inout Form) throws {
         let encoder = JSONEncoder()
         encoder.outputFormatting = .sortedKeys
         func json<T: Encodable>(_ value: T) throws -> String { String(decoding: try encoder.encode(value), as: UTF8.self) }

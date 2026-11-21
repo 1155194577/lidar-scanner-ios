@@ -17,6 +17,16 @@ GET /print/{id}/result long-polls an STL. Legacy clients get `model/stl` and an
 requests must carry `Authorization: Bearer <token>` or get a 401. GET /last returns a JSON summary
 of the last accepted print request, for UI tests.
 
+Signed uploads: POST /print/uploads takes JSON {"job_id", "files": {name: {"content_type", "size"}}}
+(names: mesh, photo, depth, depth_confidence, face_vertices) and returns {"job_id", "expires_in": 900,
+"uploads": {name: {"url", "method": "PUT", "headers"}}}; a repeated request returns fresh URLs for the same
+job. PUT /s3/<job>/<name> needs exactly those headers, no Authorization, a live signature and the declared
+size, else 403 (expired or bad signature, S3-style XML) or 400. POST /print with `job_id` and
+`uploaded=<names>` (form fields, no file parts) uses the stored files, or answers 409
+{"detail": "upload missing: depth", "missing": ["depth"]}. Test modes go in front of the base path,
+joined by "-": /fail (job errors at repair), /expire (each job's first URL per file is already expired),
+/drop (the first submit of each job reports its first file missing), /legacy (no /print/uploads: 405).
+
 POST /photo-check takes `photo` plus optional `camera_transform` and answers
 `{ok, issues: [{code, message}], camera_pitch_deg, angle_checked, max_pitch_deg}`; like the
 live check it flags `steep_angle` when the camera looks more than 30 degrees below level.
@@ -38,6 +48,29 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 MESH_EXTENSIONS = (".obj", ".ply", ".usdz")
 PHOTO_EXTENSIONS = (".jpg", ".jpeg", ".png")
 MAX_UPLOAD_BYTES = 200 * 1024 * 1024
+UPLOAD_NAMES = ("mesh", "photo", "depth", "depth_confidence", "face_vertices")
+UPLOAD_FILENAMES = {"photo": "photo.jpg", "depth": "depth.f32", "depth_confidence": "confidence.u8",
+                    "face_vertices": "face_vertices.f32"}
+MESH_TYPES = {"model/vnd.usdz+zip": ".usdz", "model/obj": ".obj", "application/x-ply": ".ply"}
+MODES = ("fail", "expire", "drop", "legacy")
+UPLOAD_EXPIRES = 900
+
+
+def split_mode(path):
+    """('/expire-drop/print', ...) -> ({'expire', 'drop'}, '/print')."""
+    parts = path.split("?")[0].rstrip("/").split("/")
+    if len(parts) > 1 and parts[1] and all(mode in MODES for mode in parts[1].split("-")):
+        return set(parts[1].split("-")), "/" + "/".join(parts[2:])
+    return set(), path.split("?")[0].rstrip("/")
+
+
+class Uploads:
+    """One job's signed URLs, stored files and counters."""
+    def __init__(self):
+        self.slots = {}
+        self.files = {}
+        self.stats = {"url_requests": 0, "puts": 0, "rejected_puts": 0, "conflicts": 0}
+        self.dropped = False
 
 
 class Job:
@@ -220,6 +253,7 @@ class Handler(BaseHTTPRequestHandler):
     timeout = 60
     last_request = {}
     jobs = {}
+    uploads = {}
     jobs_lock = threading.Lock()
 
     def do_GET(self):
@@ -229,7 +263,7 @@ class Handler(BaseHTTPRequestHandler):
             return self.reply(200, "application/json", json.dumps(Handler.last_request).encode())
         if not self.authorized():
             return
-        path = self.path.removeprefix("/fail").strip("/").split("/")
+        path = split_mode(self.path)[1].strip("/").split("/")
         if len(path) not in (2, 3) or path[0] != "print":
             return self.error(404, "not found")
         with self.jobs_lock:
@@ -255,12 +289,99 @@ class Handler(BaseHTTPRequestHandler):
             return False
         return True
 
+    def do_PUT(self):
+        parts = self.path.split("?")[0].strip("/").split("/")
+        query = dict(item.split("=", 1) for item in self.path.partition("?")[2].split("&") if "=" in item)
+        if len(parts) != 3 or parts[0] != "s3":
+            return self.error(404, "not found")
+        job_id, name = parts[1], parts[2]
+        with self.jobs_lock:
+            uploads = self.uploads.get(job_id)
+            slot = uploads.slots.get(name) if uploads else None
+        try:
+            length = int(self.headers.get("Content-Length", ""))
+        except ValueError:
+            return self.error(411, "Content-Length required")
+        body = self.rfile.read(length)
+        if slot is None or query.get("sig") != slot["sig"] or self.headers.get("Authorization"):
+            return self.s3_error(uploads, "SignatureDoesNotMatch", "The request signature we calculated does not match the signature you provided.")
+        if time.time() > float(query.get("expires", "0")):
+            return self.s3_error(uploads, "AccessDenied", "Request has expired")
+        for header, value in slot["headers"].items():
+            if self.headers.get(header) != value:
+                return self.s3_error(uploads, "SignatureDoesNotMatch", "%s must be %s" % (header, value))
+        if len(body) != slot["size"]:
+            return self.reply(400, "application/xml", b"<Error><Code>IncompleteBody</Code><Message>size differs from the declared size</Message></Error>")
+        with self.jobs_lock:
+            uploads.files[name] = (slot["content_type"], body)
+            uploads.stats["puts"] += 1
+        self.log_message("upload %s/%s (%d bytes)", job_id, name, len(body))
+        self.reply(200, "application/xml", b"")
+
+    def s3_error(self, uploads, code, message):
+        if uploads:
+            with self.jobs_lock:
+                uploads.stats["rejected_puts"] += 1
+        self.reply(403, "application/xml", ("<Error><Code>%s</Code><Message>%s</Message></Error>" % (code, message)).encode())
+
+    def create_uploads(self, modes):
+        if "legacy" in modes:
+            return self.error(405, "Method Not Allowed")
+        try:
+            length = int(self.headers.get("Content-Length", ""))
+            request = json.loads(self.rfile.read(length))
+            files = request["files"]
+            assert isinstance(files, dict) and files
+        except (ValueError, KeyError, TypeError, AssertionError):
+            return self.error(422, "expected JSON {job_id, files: {name: {content_type, size}}}")
+        job_id = request.get("job_id") or str(uuid.uuid4())
+        host = self.headers.get("Host", "127.0.0.1:%d" % self.server.server_address[1])
+        response = {}
+        with self.jobs_lock:
+            uploads = self.uploads.setdefault(job_id, Uploads())
+            uploads.stats["url_requests"] += 1
+            for name, spec in files.items():
+                if name not in UPLOAD_NAMES:
+                    return self.error(422, "unknown upload " + name)
+                content_type, size = spec.get("content_type"), spec.get("size")
+                if not content_type or not isinstance(size, int) or not 0 < size <= MAX_UPLOAD_BYTES:
+                    return self.error(422, "%s needs content_type and a size up to %d bytes" % (name, MAX_UPLOAD_BYTES))
+                expired = "expire" in modes and name not in uploads.slots
+                expires = time.time() + (-1 if expired else UPLOAD_EXPIRES)
+                slot = {"sig": uuid.uuid4().hex, "content_type": content_type, "size": size,
+                        "headers": {"Content-Type": content_type, "x-amz-server-side-encryption": "AES256"}}
+                uploads.slots[name] = slot
+                response[name] = {"url": "http://%s/s3/%s/%s?expires=%d&sig=%s" % (host, job_id, name, expires, slot["sig"]),
+                                  "method": "PUT", "headers": slot["headers"]}
+        self.reply(200, "application/json", json.dumps({"job_id": job_id, "expires_in": UPLOAD_EXPIRES, "uploads": response}).encode())
+
+    def attach_uploads(self, parts, modes):
+        """Puts a signed upload's stored files into `parts`; returns the 409 missing list, if any."""
+        names = [name for name in parts.pop("uploaded")[1].decode().split(",") if name]
+        job_id = parts.get("job_id", (None, b""))[1].decode()
+        with self.jobs_lock:
+            uploads = self.uploads.get(job_id) or Uploads()
+            if "drop" in modes and names and not uploads.dropped:
+                uploads.dropped = True
+                uploads.files.pop(names[0], None)
+            missing = [name for name in names if name not in uploads.files]
+            if missing:
+                uploads.stats["conflicts"] += 1
+                return missing, None
+            for name in names:
+                content_type, data = uploads.files[name]
+                filename = "mesh" + MESH_TYPES.get(content_type, ".bin") if name == "mesh" else UPLOAD_FILENAMES[name]
+                parts[name] = (filename, data)
+            return [], {"uploaded": names, "upload_stats": dict(uploads.stats)}
+
     def do_POST(self):
-        path = self.path.rstrip("/")
-        if path not in ("/print", "/fail/print", "/photo-check"):
+        modes, path = split_mode(self.path)
+        if path not in ("/print", "/print/uploads", "/photo-check"):
             return self.error(404, "not found")
         if not self.authorized():
             return
+        if path == "/print/uploads":
+            return self.create_uploads(modes)
         content_type = self.headers.get("Content-Type", "")
         if not content_type.startswith("multipart/form-data"):
             return self.error(400, "expected multipart/form-data")
@@ -273,6 +394,13 @@ class Handler(BaseHTTPRequestHandler):
             return self.error(413, "upload larger than %d MB" % (MAX_UPLOAD_BYTES // (1024 * 1024)))
         body = self.rfile.read(length)
         parts = parse_multipart(content_type, body)
+        upload_summary = {}
+        if path == "/print" and "uploaded" in parts:
+            if any(name in parts for name in UPLOAD_NAMES):
+                return self.error(400, "send uploaded files by URL, not as file parts")
+            missing, upload_summary = self.attach_uploads(parts, modes)
+            if missing:
+                return self.reply(409, "application/json", json.dumps({"detail": "upload missing: " + ", ".join(missing), "missing": missing}).encode())
 
         if path == "/photo-check":
             if not parts.get("photo", (None, b""))[1]:
@@ -332,7 +460,7 @@ class Handler(BaseHTTPRequestHandler):
                     source += ", depth %(depth_width)dx%(depth_height)d" % summary
                 stem = "face"
 
-        Handler.last_request = {"fields": sorted(parts), "source": source}
+        Handler.last_request = {"fields": sorted(parts), "source": source, **upload_summary}
         if "photo" in parts:
             Handler.last_request.update(summary)
 
@@ -340,7 +468,7 @@ class Handler(BaseHTTPRequestHandler):
         report = {"extents_mm": [20.0, 20.0, 20.0], "watertight": True, "volume_cm3": 8.0}
         if "application/x-ndjson" in self.headers.get("Accept", ""):
             job_id = parts.get("job_id", (None, b""))[1].decode() or str(uuid.uuid4())
-            fail_stage = self.fail_stage or ("repair" if self.path.startswith("/fail/") else None)
+            fail_stage = self.fail_stage or ("repair" if "fail" in modes else None)
             with self.jobs_lock:
                 if job_id not in self.jobs:
                     self.jobs[job_id] = Job(job_id, stem, self.delay, fail_stage)
