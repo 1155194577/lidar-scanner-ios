@@ -26,7 +26,7 @@ struct SettingsView: View {
                 } header: {
                     Text("Print Server")
                 } footer: {
-                    Text("Print uploads the scan to \(endpointPreview) and opens the returned STL so you can send it to a slicer app. The token is sent as a Bearer token and kept in the Keychain.")
+                    Text("Print uploads the scan to \(endpointPreview). You can save the returned STL in My Scans or share it with a slicer app. The token is sent as a Bearer token and kept in the Keychain.")
                 }
             }
             .navigationTitle("Settings")
