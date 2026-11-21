@@ -8,11 +8,51 @@ struct PrintJob: Identifiable, Codable {
     let kind: String
     let baseURL: String
     var progress = PrintProgress.uploading
-    var result: URL?
+    var resultPath: String?
+    var result: URL? {
+        get { resultPath.map { PrintJobManager.directory.appendingPathComponent($0) } }
+        set { resultPath = newValue.map { $0.path.replacingOccurrences(of: PrintJobManager.directory.path + "/", with: "") } }
+    }
     var error: String?
     var accepted = false
     var retryFromStart = false
     var isFinished: Bool { result != nil || error != nil }
+}
+
+extension PrintJob {
+    private enum CodingKeys: String, CodingKey {
+        case id, name, kind, baseURL, progress, resultPath, result, error, accepted, retryFromStart
+    }
+
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        id = try values.decode(String.self, forKey: .id)
+        name = try values.decode(String.self, forKey: .name)
+        kind = try values.decode(String.self, forKey: .kind)
+        baseURL = try values.decode(String.self, forKey: .baseURL)
+        progress = try values.decodeIfPresent(PrintProgress.self, forKey: .progress) ?? .uploading
+        resultPath = try values.decodeIfPresent(String.self, forKey: .resultPath)
+        if resultPath == nil, let legacy = try values.decodeIfPresent(URL.self, forKey: .result),
+           let range = legacy.path.range(of: "/PrintJobs/", options: .backwards) {
+            resultPath = String(legacy.path[range.upperBound...])
+        }
+        error = try values.decodeIfPresent(String.self, forKey: .error)
+        accepted = try values.decodeIfPresent(Bool.self, forKey: .accepted) ?? false
+        retryFromStart = try values.decodeIfPresent(Bool.self, forKey: .retryFromStart) ?? false
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var values = encoder.container(keyedBy: CodingKeys.self)
+        try values.encode(id, forKey: .id)
+        try values.encode(name, forKey: .name)
+        try values.encode(kind, forKey: .kind)
+        try values.encode(baseURL, forKey: .baseURL)
+        try values.encode(progress, forKey: .progress)
+        try values.encodeIfPresent(resultPath, forKey: .resultPath)
+        try values.encodeIfPresent(error, forKey: .error)
+        try values.encode(accepted, forKey: .accepted)
+        try values.encode(retryFromStart, forKey: .retryFromStart)
+    }
 }
 
 @MainActor

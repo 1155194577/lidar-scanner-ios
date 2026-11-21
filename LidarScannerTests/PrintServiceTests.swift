@@ -270,6 +270,18 @@ final class PrintServiceTests: XCTestCase {
         manager.dismiss(manager.jobs[0])
     }
 
+    func testPersistedResultUsesRelativePathAndMigratesOldContainer() throws {
+        let legacy = #"{"id":"job","name":"Cube","kind":"photo","baseURL":"http://print.test","result":"file:///old-container/Library/Application%20Support/PrintJobs/job/Cube.stl"}"#
+        let job = try JSONDecoder().decode(PrintJob.self, from: Data(legacy.utf8))
+        XCTAssertEqual(job.result, PrintJobManager.directory.appendingPathComponent("job/Cube.stl"))
+        let data = try JSONEncoder().encode(job)
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        XCTAssertNil(json["result"])
+        XCTAssertEqual(json["resultPath"] as? String, "job/Cube.stl")
+        XCTAssertFalse(String(decoding: data, as: UTF8.self).contains("old-container"))
+        XCTAssertEqual(try JSONDecoder().decode(PrintJob.self, from: data).result, job.result)
+    }
+
     func testBackgroundDownloadResponseHandling() throws {
         let file = directory.appendingPathComponent("download")
         let url = URL(string: "http://print.test/result")!
