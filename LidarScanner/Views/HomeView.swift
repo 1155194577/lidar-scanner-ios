@@ -3,6 +3,7 @@ import SwiftUI
 struct HomeView: View {
     @EnvironmentObject private var store: ScanStore
     @State private var activeMode: ScanKind?
+    @State private var showsSettings = false
 
     var body: some View {
         NavigationStack {
@@ -42,7 +43,18 @@ struct HomeView: View {
                 }
             }
             .navigationTitle("LiDAR Scanner")
+            .toolbar {
+                ToolbarItem(placement: .primaryAction) {
+                    Button {
+                        showsSettings = true
+                    } label: {
+                        Label("Settings", systemImage: "gearshape")
+                    }
+                    .accessibilityIdentifier("settingsButton")
+                }
+            }
         }
+        .sheet(isPresented: $showsSettings) { SettingsView() }
         .fullScreenCover(item: $activeMode, onDismiss: store.reload) { kind in
             switch kind {
             case .room:
