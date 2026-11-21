@@ -37,7 +37,8 @@ final class LidarScannerUITests: XCTestCase {
 
     private func assertHomeRowsRemainTappableWithPrint(finished: Bool) throws {
         try requirePrintStub()
-        let app = launch(["-UITestSeedSampleScans", "-printBaseURL", Self.stubURL, "-printAPIToken", Self.stubToken])
+        let app = launch(["-UITestSeedSampleScans", "-printBaseURL", Self.stubURL, "-printAPIToken", Self.stubToken,
+                          "-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryXS"])
         app.buttons["myScansLink"].tap()
         app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'print-Room '")).firstMatch.tap()
         XCTAssertTrue(app.scrollViews["printJobBanner"].waitForExistence(timeout: 5))
