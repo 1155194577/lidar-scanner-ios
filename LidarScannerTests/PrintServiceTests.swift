@@ -761,10 +761,228 @@ final class PrintServiceTests: XCTestCase {
         XCTAssertTrue(store.scans.isEmpty)
     }
 
-    private func service(stallTimeout: TimeInterval = 10, token: String? = nil) throws -> PrintService {
+    // MARK: Signed uploads
+
+    private static let depth = DepthCapture(depth: [0.5, .nan], confidence: [2, 0], width: 2, height: 1,
+                                            intrinsics: CameraIntrinsics(fx: 1400, fy: 1400, cx: 960, cy: 720, width: 1920, height: 1440),
+                                            objectPoints: [])
+
+    func testSignedPayloadNamesOnlyTheFilesEachInputHas() throws {
+        let mesh = FileManager.default.temporaryDirectory.appendingPathComponent("signed-\(UUID().uuidString).obj")
+        try Data("v 0 0 0".utf8).write(to: mesh)
+        defer { try? FileManager.default.removeItem(at: mesh) }
+        let service = try PrintService(baseURL: "http://localhost:8765")
+        let face = FaceCapture(photo: Data("jpeg".utf8), intrinsics: .init(fx: 1, fy: 1, cx: 0, cy: 0, width: 4, height: 4),
+                               cameraTransform: Array(repeating: 0, count: 16), imageOrientation: .up,
+                               depth: .init(values: [1, 2], width: 2, height: 1), faceVertices: [0, 0, 0, 1, 1, 1, 2, 2, 2])
+        XCTAssertEqual(try service.payload(for: .mesh(mesh)).files.map(\.name), ["mesh"])
+        XCTAssertEqual(try service.payload(for: .mesh(mesh)).files.first?.contentType, "model/obj")
+        XCTAssertEqual(try service.payload(for: .photo(Data("jpeg".utf8), heightMM: 10)).files.map(\.name), ["photo"])
+        XCTAssertEqual(try service.payload(for: .photo(Data("jpeg".utf8), heightMM: 10, depth: Self.depth)).files.map(\.name), ["photo", "depth", "depth_confidence"])
+        XCTAssertEqual(try service.payload(for: .face(face)).files.map(\.name), ["photo", "depth", "face_vertices"])
+        XCTAssertEqual(try service.payload(for: .face(face)).fields.map(\.name).contains("face_vertex_count"), true)
+    }
+
+    func testUploadsRequestSendsJobIDTypesAndSizes() throws {
+        let service = try PrintService(baseURL: "http://localhost:8765", token: "abc")
+        let payload = try service.payload(for: .photo(Data("jpeg".utf8), heightMM: 10, depth: Self.depth))
+        let request = try service.makeUploadsRequest(jobID: "job-1", files: payload.files)
+        XCTAssertEqual(request.url?.absoluteString, "http://localhost:8765/print/uploads")
+        XCTAssertEqual(request.httpMethod, "POST")
+        XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer abc")
+        XCTAssertEqual(request.value(forHTTPHeaderField: "Content-Type"), "application/json")
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: try XCTUnwrap(request.httpBody)) as? [String: Any])
+        XCTAssertEqual(json["job_id"] as? String, "job-1")
+        let files = try XCTUnwrap(json["files"] as? [String: [String: Any]])
+        XCTAssertEqual(Set(files.keys), ["photo", "depth", "depth_confidence"])
+        XCTAssertEqual(files["photo"]?["content_type"] as? String, "image/jpeg")
+        XCTAssertEqual(files["photo"]?["size"] as? Int, 4)
+        XCTAssertEqual(files["depth"]?["size"] as? Int, 8)
+        XCTAssertEqual(files["depth_confidence"]?["content_type"] as? String, "application/octet-stream")
+    }
+
+    func testSubmitRequestNamesUploadsAndHasNoFileParts() throws {
+        let service = try PrintService(baseURL: "http://localhost:8765", token: "abc")
+        let payload = try service.payload(for: .photo(Data("jpeg".utf8), heightMM: 120, depth: Self.depth))
+        let request = service.makeSubmitRequest(for: payload, jobID: "job-1", boundary: "B")
+        let body = String(decoding: try XCTUnwrap(request.httpBody), as: UTF8.self)
+        XCTAssertEqual(request.url?.absoluteString, "http://localhost:8765/print")
+        XCTAssertEqual(request.value(forHTTPHeaderField: "Accept"), "application/x-ndjson, model/stl")
+        XCTAssertTrue(body.contains("name=\"job_id\"\r\n\r\njob-1\r\n"))
+        XCTAssertTrue(body.contains("name=\"uploaded\"\r\n\r\nphoto,depth,depth_confidence\r\n"))
+        XCTAssertTrue(body.contains("name=\"height_mm\"\r\n\r\n120.0\r\n"))
+        XCTAssertTrue(body.contains("name=\"depth_width\"\r\n\r\n2\r\n"))
+        XCTAssertFalse(body.contains("filename="))
+    }
+
+    func testSignedUploadPutsEachFileWithReturnedHeadersThenSubmits() async throws {
+        let uploader = FakeUploader()
+        var calls: [String] = []
+        StubProtocol.handler = { request in
+            let path = request.url!.path
+            calls.append("\(request.httpMethod!) \(path)")
+            if path == "/print/uploads" {
+                let files = (try? JSONSerialization.jsonObject(with: Self.body(of: request)) as? [String: Any])?["files"] as? [String: Any] ?? [:]
+                return (200, "application/json", Self.uploadPlan(for: files.keys.sorted()))
+            }
+            XCTAssertFalse(String(decoding: Self.body(of: request), as: UTF8.self).contains("filename="))
+            return (200, "application/x-ndjson", Data("{\"type\":\"accepted\",\"job_id\":\"job-1\"}\n{\"type\":\"done\",\"filename\":\"x.stl\",\"stl_base64\":\"c3Rs\"}\n".utf8))
+        }
+        let state = PrintUploadState()
+        let url = try await service(token: "abc", signedUploads: true, uploader: uploader)
+            .requestSTL(for: .photo(Data("jpeg".utf8), heightMM: 10, depth: Self.depth), name: "signed-\(UUID().uuidString)",
+                        in: FileManager.default.temporaryDirectory, jobID: "job-1", uploads: state)
+        defer { try? FileManager.default.removeItem(at: url) }
+        XCTAssertEqual(try String(contentsOf: url, encoding: .utf8), "stl")
+        XCTAssertEqual(calls, ["POST /print/uploads", "POST /print"])
+        XCTAssertEqual(uploader.puts.map(\.name), ["photo", "depth", "depth_confidence"])
+        XCTAssertEqual(uploader.puts[0].data, Data("jpeg".utf8))
+        XCTAssertEqual(uploader.puts[0].request.httpMethod, "PUT")
+        XCTAssertEqual(uploader.puts[0].request.value(forHTTPHeaderField: "Content-Type"), "image/jpeg")
+        XCTAssertEqual(uploader.puts[0].request.value(forHTTPHeaderField: "x-amz-meta-job"), "job-1")
+        XCTAssertNil(uploader.puts[0].request.value(forHTTPHeaderField: "Authorization"))
+        XCTAssertEqual(state.uploadedNames, ["photo", "depth", "depth_confidence"])
+    }
+
+    func testExpiredUploadURLIsRenewedForThatFileOnly() async throws {
+        let uploader = FakeUploader()
+        uploader.statuses = ["depth": [403]]
+        var requested: [[String]] = []
+        StubProtocol.handler = { request in
+            if request.url!.path == "/print/uploads" {
+                let names = ((try? JSONSerialization.jsonObject(with: Self.body(of: request)) as? [String: Any])?["files"] as? [String: Any] ?? [:]).keys.sorted()
+                requested.append(names)
+                return (200, "application/json", Self.uploadPlan(for: names))
+            }
+            return (200, "model/stl", Data("stl".utf8))
+        }
+        let url = try await service(signedUploads: true, uploader: uploader)
+            .requestSTL(for: .photo(Data("jpeg".utf8), heightMM: 10, depth: Self.depth), name: "renew-\(UUID().uuidString)",
+                        in: FileManager.default.temporaryDirectory, jobID: "job-1")
+        try? FileManager.default.removeItem(at: url)
+        XCTAssertEqual(requested, [["depth", "depth_confidence", "photo"], ["depth"]])
+        XCTAssertEqual(uploader.puts.map(\.name), ["photo", "depth", "depth", "depth_confidence"])
+    }
+
+    func testConflictReuploadsTheMissingFilesAndResubmits() async throws {
+        let uploader = FakeUploader()
+        var requested: [[String]] = []
+        var submits = 0
+        StubProtocol.handler = { request in
+            if request.url!.path == "/print/uploads" {
+                let names = ((try? JSONSerialization.jsonObject(with: Self.body(of: request)) as? [String: Any])?["files"] as? [String: Any] ?? [:]).keys.sorted()
+                requested.append(names)
+                return (200, "application/json", Self.uploadPlan(for: names))
+            }
+            submits += 1
+            if submits == 1 { return (409, "application/json", Data(#"{"detail":"upload missing: depth","missing":["depth"]}"#.utf8)) }
+            return (200, "model/stl", Data("stl".utf8))
+        }
+        let url = try await service(signedUploads: true, uploader: uploader)
+            .requestSTL(for: .photo(Data("jpeg".utf8), heightMM: 10, depth: Self.depth), name: "conflict-\(UUID().uuidString)",
+                        in: FileManager.default.temporaryDirectory, jobID: "job-1")
+        try? FileManager.default.removeItem(at: url)
+        XCTAssertEqual(submits, 2)
+        XCTAssertEqual(requested, [["depth", "depth_confidence", "photo"], ["depth"]])
+        XCTAssertEqual(uploader.puts.map(\.name), ["photo", "depth", "depth_confidence", "depth"])
+    }
+
+    func testResendBeforeAcceptedRepeatsOnlyTheSubmit() async throws {
+        let uploader = FakeUploader()
+        var calls: [String] = []
+        StubProtocol.handler = { request in
+            calls.append(request.url!.path)
+            if request.url!.path == "/print/uploads" { return (200, "application/json", Self.uploadPlan(for: ["photo"])) }
+            return (200, "model/stl", Data("stl".utf8))
+        }
+        let state = PrintUploadState()
+        state.markUploaded("photo")
+        let url = try await service(signedUploads: true, uploader: uploader)
+            .requestSTL(for: .photo(Data("jpeg".utf8), heightMM: 10), name: "resend-\(UUID().uuidString)",
+                        in: FileManager.default.temporaryDirectory, jobID: "job-1", uploads: state)
+        try? FileManager.default.removeItem(at: url)
+        XCTAssertEqual(calls, ["/print"])
+        XCTAssertTrue(uploader.puts.isEmpty)
+    }
+
+    func testServerWithoutSignedUploadsGetsTheMultipartPost() async throws {
+        let uploader = FakeUploader()
+        var calls: [String] = []
+        StubProtocol.handler = { request in
+            calls.append(request.url!.path)
+            if request.url!.path == "/print/uploads" { return (405, "application/json", Data(#"{"detail":"Method Not Allowed"}"#.utf8)) }
+            XCTAssertTrue(String(decoding: Self.body(of: request), as: UTF8.self).contains("name=\"photo\"; filename=\"photo.jpg\""))
+            return (200, "model/stl", Data("stl".utf8))
+        }
+        let state = PrintUploadState()
+        let url = try await service(signedUploads: true, uploader: uploader)
+            .requestSTL(for: .photo(Data("jpeg".utf8), heightMM: 10), name: "legacy-\(UUID().uuidString)",
+                        in: FileManager.default.temporaryDirectory, jobID: "job-1", uploads: state)
+        try? FileManager.default.removeItem(at: url)
+        XCTAssertEqual(calls, ["/print/uploads", "/print"])
+        XCTAssertTrue(state.legacy)
+        XCTAssertTrue(uploader.puts.isEmpty)
+    }
+
+    func testFailedUploadsRequestIsAnError() async throws {
+        StubProtocol.handler = { _ in (401, "application/json", Data(#"{"detail":"bad token"}"#.utf8)) }
+        do {
+            _ = try await service(signedUploads: true, uploader: FakeUploader())
+                .requestSTL(for: .photo(Data("jpeg".utf8), heightMM: 10), name: "x", in: FileManager.default.temporaryDirectory, jobID: "job-1")
+            XCTFail("expected an error")
+        } catch PrintError.server(let status, let message) {
+            XCTAssertEqual(status, 401)
+            XCTAssertEqual(message, "bad token")
+        }
+    }
+
+    private static func uploadPlan(for names: [String]) -> Data {
+        let uploads = Dictionary(uniqueKeysWithValues: names.map { name in
+            (name, ["url": "https://s3.test/bucket/job-1/\(name)?sig=\(UUID().uuidString)", "method": "PUT",
+                    "headers": ["Content-Type": name == "photo" ? "image/jpeg" : "application/octet-stream", "x-amz-meta-job": "job-1"]] as [String: Any])
+        })
+        return try! JSONSerialization.data(withJSONObject: ["job_id": "job-1", "expires_in": 900, "uploads": uploads])
+    }
+
+    private static func body(of request: URLRequest) -> Data {
+        if let body = request.httpBody { return body }
+        guard let stream = request.httpBodyStream else { return Data() }
+        stream.open()
+        defer { stream.close() }
+        var data = Data()
+        var buffer = [UInt8](repeating: 0, count: 4096)
+        while stream.hasBytesAvailable {
+            let count = stream.read(&buffer, maxLength: buffer.count)
+            if count <= 0 { break }
+            data.append(buffer, count: count)
+        }
+        return data
+    }
+
+    private func service(stallTimeout: TimeInterval = 10, token: String? = nil, signedUploads: Bool = false, uploader: PrintUploading? = nil) throws -> PrintService {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [StubProtocol.self]
-        return try PrintService(baseURL: "http://print.test", token: token, session: URLSession(configuration: configuration), stallTimeout: stallTimeout)
+        return try PrintService(baseURL: "http://print.test", token: token, session: URLSession(configuration: configuration), stallTimeout: stallTimeout, signedUploads: signedUploads, uploader: uploader)
+    }
+}
+
+private final class FakeUploader: PrintUploading, @unchecked Sendable {
+    struct Put { let name: String; let request: URLRequest; let data: Data }
+    private let lock = NSLock()
+    private var recorded: [Put] = []
+    /// Status codes to answer per file name, in order; then 200.
+    var statuses: [String: [Int]] = [:]
+    var puts: [Put] { lock.withLock { recorded } }
+
+    func upload(_ request: URLRequest, fromFile file: URL, onProgress: @escaping @Sendable (Int64) -> Void) async throws -> (status: Int, body: Data) {
+        let name = request.url!.lastPathComponent
+        let data = try Data(contentsOf: file)
+        let status: Int = lock.withLock {
+            recorded.append(Put(name: name, request: request, data: data))
+            return statuses[name]?.isEmpty == false ? statuses[name]!.removeFirst() : 200
+        }
+        onProgress(Int64(data.count))
+        return (status, status == 403 ? Data("<Error><Code>AccessDenied</Code><Message>Request has expired</Message></Error>".utf8) : Data())
     }
 }
 

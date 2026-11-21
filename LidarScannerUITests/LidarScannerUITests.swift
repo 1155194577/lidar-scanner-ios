@@ -376,6 +376,36 @@ final class LidarScannerUITests: XCTestCase {
         XCTAssertEqual(received["depth_width"] as? Int, 48)
         XCTAssertEqual(received["depth_height"] as? Int, 64)
         XCTAssertEqual((received["object_points"] as? [[Double]])?.count, 2)
+        XCTAssertEqual(received["uploaded"] as? [String], ["photo", "depth", "depth_confidence"])
+    }
+
+    func testPhotoPrintRenewsExpiredUploadURLAndReuploadsMissingFile() throws {
+        try requirePrintStub()
+        try printPhoto(baseURL: Self.stubURL + "/expire-drop")
+        let received = try lastStubRequest()
+        XCTAssertEqual(received["uploaded"] as? [String], ["photo", "depth", "depth_confidence"])
+        let stats = try XCTUnwrap(received["upload_stats"] as? [String: Int])
+        XCTAssertEqual(stats["rejected_puts"], 3, "each file's expired first URL should be refused once")
+        XCTAssertEqual(stats["conflicts"], 1)
+        XCTAssertEqual(stats["puts"], 4, "three files plus the one the server reported missing")
+    }
+
+    func testPhotoPrintFallsBackToMultipartWithoutSignedUploads() throws {
+        try requirePrintStub()
+        try printPhoto(baseURL: Self.stubURL + "/legacy")
+        let received = try lastStubRequest()
+        XCTAssertNil(received["uploaded"])
+        XCTAssertEqual(received["fields"] as? [String], ["camera_transform", "depth", "depth_confidence", "depth_height", "depth_width", "height_mm", "image_orientation", "intrinsics", "job_id", "object_points", "photo"])
+    }
+
+    private func printPhoto(baseURL: String) throws {
+        let app = launch(["-UITestFakePhotoCapture", "-UITestFakePitch", "5", "-printBaseURL", baseURL, "-printAPIToken", Self.stubToken])
+        app.buttons["photoPrintButton"].tap()
+        XCTAssertTrue(app.buttons["takePhotoAndPrintButton"].waitForExistence(timeout: 5))
+        app.buttons["takePhotoAndPrintButton"].tap()
+        tapSharePrintResult(in: app, timeout: 20)
+        XCTAssertTrue(app.otherElements["ActivityListView"].waitForExistence(timeout: 15), "STL share sheet did not open")
+        XCTAssertFalse(app.alerts["Couldn't print photo"].exists)
     }
 
     func testPhotoCheckFlagsSteepShotAndCanPrintAnyway() throws {

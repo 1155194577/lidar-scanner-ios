@@ -55,6 +55,16 @@ POST {server}/print   multipart/form-data, Authorization: Bearer <token>
     object_points=[[u,v] base, [u,v] top] (measured points projected into the photo, pixels)
 → 200 model/stl  (X-Print-Report header); errors are JSON {"detail"}
 
+Signed uploads (servers that have POST /print/uploads; others get the multipart POST above):
+1. POST {server}/print/uploads   JSON, Authorization: Bearer <token>
+     {"job_id": "<client uuid>", "files": {"photo": {"content_type", "size"}, ...}}
+     (only the files the print has: mesh, photo, depth, depth_confidence, face_vertices)
+   → 200 {"job_id", "expires_in", "uploads": {"photo": {"url", "method": "PUT", "headers"}, ...}}
+2. PUT each file to its url with exactly those headers (background URLSession, no Bearer token);
+   a 403 (expired URL) asks step 1 again for that file
+3. POST {server}/print   job_id, uploaded=photo,depth,...  + the usual form fields, no file parts
+   → the same NDJSON stream; 409 {"detail", "missing": [...]} re-uploads those files and resends
+
 POST {server}/photo-check   before a Photo Print: photo=<upright jpeg> + camera_transform
 → 200 {"ok", "issues": [{"code": steep_angle|cluttered_background|cut_off, "message"}], "camera_pitch_deg", ...}
 ```
@@ -70,7 +80,10 @@ python3 scripts/print_stub.py --token stub-token   # listens on port 8765
 The stub streams stages over `--delay` seconds (default 12), flushing a heartbeat at least
 every 2 seconds, and still supports legacy STL clients. Use `--fail-stage repair` for a
 mid-stream error, or set the app's server URL to `http://127.0.0.1:8765/fail` to exercise
-failure/Retry UI against the same stub instance. No second stub is required by the UI tests.
+failure/Retry UI against the same stub instance. The stub also hands out signed upload
+URLs on itself: `/expire` makes each job's first URL per file already expired, `/drop` makes the
+first submit report a file missing (409), `/legacy` answers 405 to `/print/uploads`; modes combine,
+e.g. `http://127.0.0.1:8765/expire-drop`. No second stub is required by the UI tests.
 It keeps jobs in memory, supports replay/result routes and idempotent submissions, and
 continues processing after a client disconnects. Restarting it clears its jobs.
 

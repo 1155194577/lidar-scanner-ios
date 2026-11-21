@@ -35,12 +35,16 @@ enum PrintError: LocalizedError, Equatable {
     case jobFailed(String)
     case lostContact
     case serverChanged
+    /// Step 3 of a signed upload got 409: the server no longer has these uploaded files.
+    case uploadMissing([String])
 
     var errorDescription: String? {
         switch self {
         case .serverChanged: return "Print server changed in Settings; print again"
         case .jobFailed(let detail): return detail
         case .lostContact: return "Lost contact with the print server. Please retry."
+        case .uploadMissing(let names):
+            return "The print server lost the uploaded \(names.isEmpty ? "files" : names.joined(separator: ", ")). Please retry."
         case .invalidBaseURL(let value):
             return "\"\(value)\" isn't a valid print server URL. Set it in Settings."
         case .server(401, _):
@@ -59,6 +63,12 @@ enum PrintError: LocalizedError, Equatable {
 /// responses and non-2xx JSON detail errors remain supported. The overall request deadline is 600 s.
 /// Async jobs include a client UUID `job_id` in the unchanged multipart form. `accepted` acknowledges it;
 /// GET /print/{id} replays the stream, and GET /print/{id}/result long-polls an STL (or JSON error).
+///
+/// Signed uploads (when the server has them): `POST /print/uploads` with the job's file names, types and sizes
+/// returns a signed URL per file; each file is PUT there with exactly the returned headers, and `POST /print`
+/// then sends `job_id`, `uploaded=<names>` and the form fields with no file parts. A 403 PUT (expired URL) asks
+/// for a fresh URL for that file; a 409 from `/print` re-uploads the files it names. Servers without
+/// `/print/uploads` (404/405) get the single multipart POST.
 struct PrintService {
     static let baseURLKey = "printBaseURL"
     static let tokenKey = "printAPIToken"
@@ -80,11 +90,15 @@ struct PrintService {
 
     let endpoint: URL
     let checkEndpoint: URL
+    let uploadsEndpoint: URL
     private let token: String?
     private let session: URLSession
     private let stallTimeout: TimeInterval
+    private let signedUploads: Bool
+    private let uploader: PrintUploading
 
-    init(baseURL: String = PrintService.configuredBaseURL, token: String? = PrintService.configuredToken, session: URLSession = .shared, stallTimeout: TimeInterval = 60) throws {
+    init(baseURL: String = PrintService.configuredBaseURL, token: String? = PrintService.configuredToken, session: URLSession = .shared,
+         stallTimeout: TimeInterval = 60, signedUploads: Bool = true, uploader: PrintUploading? = nil) throws {
         let trimmed = baseURL.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let url = URL(string: trimmed), let scheme = url.scheme?.lowercased(),
               ["http", "https"].contains(scheme), url.host?.isEmpty == false else {
@@ -92,14 +106,46 @@ struct PrintService {
         }
         endpoint = url.appendingPathComponent("print")
         checkEndpoint = url.appendingPathComponent("photo-check")
+        uploadsEndpoint = endpoint.appendingPathComponent("uploads")
         self.token = token
         self.session = session
         self.stallTimeout = stallTimeout
+        self.signedUploads = signedUploads
+        self.uploader = uploader ?? SessionUploader(session: session)
     }
 
+    /// The single multipart `POST /print` (servers without signed uploads).
     func makeRequest(for input: PrintInput, boundary: String = "Boundary-\(UUID().uuidString)", jobID: String? = nil) throws -> URLRequest {
         var form = MultipartForm(boundary: boundary)
         if let jobID { form.addField(name: "job_id", value: jobID) }
+        try payload(for: input).write(to: &form)
+        return post(form, to: endpoint, accept: "application/x-ndjson, model/stl", timeout: 600)
+    }
+
+    /// Step 3 of a signed upload: `job_id`, `uploaded` and the form fields, without file parts.
+    func makeSubmitRequest(for payload: PrintPayload, jobID: String, boundary: String = "Boundary-\(UUID().uuidString)") -> URLRequest {
+        var form = MultipartForm(boundary: boundary)
+        form.addField(name: "job_id", value: jobID)
+        form.addField(name: "uploaded", value: payload.files.map(\.name).joined(separator: ","))
+        for field in payload.fields { form.addField(name: field.name, value: field.value) }
+        return post(form, to: endpoint, accept: "application/x-ndjson, model/stl", timeout: 600)
+    }
+
+    /// Step 1 of a signed upload: asks for a signed URL per file.
+    func makeUploadsRequest(jobID: String, files: [PrintPayload.File]) throws -> URLRequest {
+        var request = URLRequest(url: uploadsEndpoint, timeoutInterval: 120)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        if let token { request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization") }
+        let described = Dictionary(uniqueKeysWithValues: files.map { ($0.name, ["content_type": $0.contentType, "size": $0.data.count] as [String: Any]) })
+        request.httpBody = try JSONSerialization.data(withJSONObject: ["job_id": jobID, "files": described], options: .sortedKeys)
+        return request
+    }
+
+    /// The input's form fields and files, in the order the multipart POST sends them.
+    func payload(for input: PrintInput) throws -> PrintPayload {
+        var form = PrintPayload()
         switch input {
         case .mesh(let url):
             form.addFile(name: "mesh", fileName: url.lastPathComponent, contentType: Self.contentType(for: url), data: try Data(contentsOf: url))
@@ -116,8 +162,7 @@ struct PrintService {
         case .face(let capture):
             try capture.addFields(to: &form)
         }
-
-        return post(form, to: endpoint, accept: "application/x-ndjson, model/stl", timeout: 600)
+        return form
     }
 
     func makePhotoCheckRequest(photo: Data, pose: CameraPose?, boundary: String = "Boundary-\(UUID().uuidString)") throws -> URLRequest {
@@ -155,12 +200,106 @@ struct PrintService {
         return request
     }
 
-    /// Uploads the input and writes the returned STL to `directory/<name>.stl`.
+    /// Uploads the input and writes the returned STL to `directory/<name>.stl`. With a `jobID`, files go by signed
+    /// URL; `uploads` remembers which already went up, so a resend before `accepted` repeats only what is missing.
     func requestSTL(for input: PrintInput, name: String, in directory: URL = PrintService.outputDirectory,
-                    jobID: String? = nil,
+                    jobID: String? = nil, uploads: PrintUploadState? = nil,
                     onProgress: @escaping @Sendable (PrintProgress) -> Void = { _ in },
                     onAccepted: @escaping @Sendable (String) -> Void = { _ in }) async throws -> URL {
-        try await receive(try makeRequest(for: input, jobID: jobID), name: name, in: directory, onProgress: onProgress, onAccepted: onAccepted)
+        let state = uploads ?? PrintUploadState()
+        guard signedUploads, let jobID, !state.legacy else {
+            return try await receive(try makeRequest(for: input, jobID: jobID), name: name, in: directory, onProgress: onProgress, onAccepted: onAccepted)
+        }
+        let payload = try payload(for: input)
+        var conflicts = 0
+        while true {
+            let pending = payload.files.filter { !state.isUploaded($0.name) }
+            if !pending.isEmpty, !(try await upload(pending, jobID: jobID, state: state, onProgress: onProgress)) {
+                state.legacy = true
+                return try await receive(try makeRequest(for: input, jobID: jobID), name: name, in: directory, onProgress: onProgress, onAccepted: onAccepted)
+            }
+            do {
+                return try await receive(makeSubmitRequest(for: payload, jobID: jobID), name: name, in: directory, onProgress: onProgress, onAccepted: onAccepted)
+            } catch PrintError.uploadMissing(let missing) {
+                let names = missing.isEmpty ? payload.files.map(\.name) : missing
+                state.forget(names)
+                conflicts += 1
+                if conflicts > 2 { throw PrintError.server(status: 409, message: "upload missing: " + names.joined(separator: ", ")) }
+            }
+        }
+    }
+
+    struct UploadSlot: Decodable, Equatable {
+        let url: URL
+        let method: String?
+        let headers: [String: String]?
+    }
+
+    /// Step 1; nil when the server has no signed uploads.
+    func requestUploads(jobID: String, files: [PrintPayload.File]) async throws -> [String: UploadSlot]? {
+        let (data, response) = try await session.data(for: try makeUploadsRequest(jobID: jobID, files: files))
+        let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+        if status == 404 || status == 405 { return nil }
+        guard (200..<300).contains(status) else { throw PrintError.server(status: status, message: Self.errorMessage(from: data)) }
+        struct Plan: Decodable { let uploads: [String: UploadSlot] }
+        guard let plan = try? JSONDecoder().decode(Plan.self, from: data) else {
+            throw PrintError.unexpectedResponse("invalid upload URLs")
+        }
+        for file in files where plan.uploads[file.name] == nil {
+            throw PrintError.unexpectedResponse("no upload URL for \(file.name)")
+        }
+        return plan.uploads
+    }
+
+    /// Steps 1 and 2 for `files`; false when the server has no signed uploads.
+    private func upload(_ files: [PrintPayload.File], jobID: String, state: PrintUploadState,
+                        onProgress: @escaping @Sendable (PrintProgress) -> Void) async throws -> Bool {
+        guard var slots = try await requestUploads(jobID: jobID, files: files) else { return false }
+        let folder = Self.uploadDirectory.appendingPathComponent(jobID, isDirectory: true)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let total = Double(max(1, files.reduce(0) { $0 + $1.data.count }))
+        var sent = 0
+        onProgress(PrintProgress(stage: "uploading", message: "Uploading to print server", progress: 0))
+        for file in files {
+            let source = folder.appendingPathComponent(file.name)
+            try file.data.write(to: source, options: .atomic)
+            var renewals = 0
+            while true {
+                guard let slot = slots[file.name] else { throw PrintError.unexpectedResponse("no upload URL for \(file.name)") }
+                var request = URLRequest(url: slot.url, timeoutInterval: 600)
+                request.httpMethod = slot.method ?? "PUT"
+                for (field, value) in slot.headers ?? [:] { request.setValue(value, forHTTPHeaderField: field) }
+                let base = sent
+                let (status, body) = try await uploader.upload(request, fromFile: source) { bytes in
+                    onProgress(PrintProgress(stage: "uploading", message: "Uploading to print server", progress: min(1, Double(base + Int(bytes)) / total)))
+                }
+                if (200..<300).contains(status) { break }
+                // An expired URL (e.g. a suspended upload resumed late) gets a fresh one for this file.
+                guard status == 403, renewals < 2, let fresh = try await requestUploads(jobID: jobID, files: [file]) else {
+                    throw PrintError.server(status: status, message: "Uploading \(file.name) failed: " + Self.storageMessage(from: body))
+                }
+                renewals += 1
+                slots.merge(fresh) { $1 }
+            }
+            sent += file.data.count
+            state.markUploaded(file.name)
+        }
+        onProgress(PrintProgress(stage: "waiting", message: "Waiting for print server", progress: nil))
+        return true
+    }
+
+    /// S3's XML `<Message>`, else the body as text.
+    static func storageMessage(from data: Data) -> String {
+        let text = String(decoding: data, as: UTF8.self)
+        if let start = text.range(of: "<Message>"), let end = text.range(of: "</Message>", range: start.upperBound..<text.endIndex) {
+            return String(text[start.upperBound..<end.lowerBound])
+        }
+        return errorMessage(from: data)
+    }
+
+    static var uploadDirectory: URL {
+        FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0].appendingPathComponent("PrintUploads", isDirectory: true)
     }
 
     enum JobRoute: String { case events = "", result }
@@ -197,7 +336,7 @@ struct PrintService {
 
     /// Photo + depth fusion fields: `depth` (float32 LE metres), `depth_confidence` (uint8), `depth_width`, `depth_height`,
     /// `intrinsics` (photo pixels) and `object_points` ([[u, v]] photo pixels).
-    private static func addDepth(_ depth: DepthCapture, to form: inout MultipartForm) throws {
+    private static func addDepth<Form: PrintFormBuilder>(_ depth: DepthCapture, to form: inout Form) throws {
         let encoder = JSONEncoder()
         encoder.outputFormatting = .sortedKeys
         form.addFile(name: "depth", fileName: "depth.f32", contentType: "application/octet-stream", data: depth.depthData)
@@ -379,7 +518,10 @@ private final class PrintTransfer: NSObject, URLSessionDataDelegate, @unchecked 
         guard continuation != nil else { return }
         if let error { finish(.failure(error)); return }
         guard let response else { finish(.failure(PrintError.unexpectedResponse("no HTTP response"))); return }
-        if !(200..<300).contains(response.statusCode) {
+        if response.statusCode == 409, let json = try? JSONSerialization.jsonObject(with: buffer) as? [String: Any],
+           let missing = json["missing"] as? [String] {
+            finish(.failure(PrintError.uploadMissing(missing)))
+        } else if !(200..<300).contains(response.statusCode) {
             finish(.failure(PrintError.server(status: response.statusCode, message: PrintService.errorMessage(from: buffer))))
         } else if streaming {
             if !buffer.isEmpty { parse(buffer) }
@@ -392,7 +534,93 @@ private final class PrintTransfer: NSObject, URLSessionDataDelegate, @unchecked 
     }
 }
 
-struct MultipartForm {
+protocol PrintFormBuilder {
+    mutating func addField(name: String, value: String)
+    mutating func addFile(name: String, fileName: String, contentType: String, data: Data)
+}
+
+/// A print request's fields and files, kept apart so files can go by signed URL.
+struct PrintPayload: PrintFormBuilder {
+    struct File: Equatable {
+        let name: String
+        let fileName: String
+        let contentType: String
+        let data: Data
+    }
+
+    private enum Part {
+        case field(name: String, value: String)
+        case file(File)
+    }
+
+    private var parts: [Part] = []
+
+    var fields: [(name: String, value: String)] {
+        parts.compactMap { if case .field(let name, let value) = $0 { return (name, value) } else { return nil } }
+    }
+
+    var files: [File] {
+        parts.compactMap { if case .file(let file) = $0 { return file } else { return nil } }
+    }
+
+    mutating func addField(name: String, value: String) { parts.append(.field(name: name, value: value)) }
+
+    mutating func addFile(name: String, fileName: String, contentType: String, data: Data) {
+        parts.append(.file(File(name: name, fileName: fileName, contentType: contentType, data: data)))
+    }
+
+    func write<Form: PrintFormBuilder>(to form: inout Form) {
+        for part in parts {
+            switch part {
+            case .field(let name, let value): form.addField(name: name, value: value)
+            case .file(let file): form.addFile(name: file.name, fileName: file.fileName, contentType: file.contentType, data: file.data)
+            }
+        }
+    }
+}
+
+/// Which of a job's files already reached their signed URLs, kept across resends of the same job.
+final class PrintUploadState: @unchecked Sendable {
+    private let lock = NSLock()
+    private var uploaded = Set<String>()
+    private var usesMultipart = false
+
+    /// The server has no signed uploads, so this job uses the single multipart POST.
+    var legacy: Bool {
+        get { lock.withLock { usesMultipart } }
+        set { lock.withLock { usesMultipart = newValue } }
+    }
+
+    var uploadedNames: Set<String> { lock.withLock { uploaded } }
+    func isUploaded(_ name: String) -> Bool { lock.withLock { uploaded.contains(name) } }
+    func markUploaded(_ name: String) { _ = lock.withLock { uploaded.insert(name) } }
+    func forget(_ names: [String]) { lock.withLock { uploaded.subtract(names) } }
+}
+
+/// PUTs a file to a signed URL and returns the status and body.
+protocol PrintUploading: Sendable {
+    func upload(_ request: URLRequest, fromFile file: URL, onProgress: @escaping @Sendable (Int64) -> Void) async throws -> (status: Int, body: Data)
+}
+
+struct SessionUploader: PrintUploading {
+    let session: URLSession
+
+    func upload(_ request: URLRequest, fromFile file: URL, onProgress: @escaping @Sendable (Int64) -> Void) async throws -> (status: Int, body: Data) {
+        let (data, response) = try await session.upload(for: request, fromFile: file, delegate: UploadProgress(onProgress: onProgress))
+        return ((response as? HTTPURLResponse)?.statusCode ?? 0, data)
+    }
+
+    private final class UploadProgress: NSObject, URLSessionTaskDelegate, Sendable {
+        let onProgress: @Sendable (Int64) -> Void
+        init(onProgress: @escaping @Sendable (Int64) -> Void) { self.onProgress = onProgress }
+
+        func urlSession(_ session: URLSession, task: URLSessionTask, didSendBodyData bytesSent: Int64, totalBytesSent: Int64, totalBytesExpectedToSend: Int64) {
+            onProgress(totalBytesSent)
+        }
+    }
+}
+
+struct MultipartForm: PrintFormBuilder {
     let boundary: String
     private var body = Data()
 

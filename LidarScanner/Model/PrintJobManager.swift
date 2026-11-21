@@ -68,6 +68,7 @@ final class PrintJobManager: ObservableObject {
     static let shared = PrintJobManager(notifications: !LaunchArguments.contains(LaunchArguments.resetScans))
     @Published private(set) var jobs: [PrintJob] = []
     private var inputs: [String: PrintInput] = [:]
+    private var uploads: [String: PrintUploadState] = [:]
     private var tasks: [String: Task<Void, Never>] = [:]
     private var downloads = Set<String>()
     private var tokens: [String: String] = [:]
@@ -102,6 +103,7 @@ final class PrintJobManager: ObservableObject {
         if case .mesh(let url) = input { job.sourceScanFileName = url.lastPathComponent }
         jobs.append(job)
         inputs[job.id] = input
+        uploads[job.id] = PrintUploadState()
         tokens[job.id] = currentToken()
         persist()
         run(job, submit: true)
@@ -143,6 +145,7 @@ final class PrintJobManager: ObservableObject {
         tasks.removeValue(forKey: job.id)?.cancel()
         jobs.removeAll { $0.id == job.id }
         inputs.removeValue(forKey: job.id)
+        uploads.removeValue(forKey: job.id)
         tokens.removeValue(forKey: job.id)
         PrintBackgroundDownload.shared.cancel(id: job.id)
         downloads.remove(job.id)
@@ -181,7 +184,7 @@ final class PrintJobManager: ObservableObject {
         guard job.baseURL == PrintService.configuredBaseURL else { throw PrintError.serverChanged }
         let token = tokens[job.id] ?? currentToken()
         if let makeService { return try makeService(job, token) }
-        return try PrintService(baseURL: job.baseURL, token: token)
+        return try PrintService(baseURL: job.baseURL, token: token, uploader: PrintBackgroundUpload.shared)
     }
 
     private func run(_ job: PrintJob, submit: Bool) {
@@ -205,7 +208,7 @@ final class PrintJobManager: ObservableObject {
                     let accepted = jobs.first(where: { $0.id == job.id })?.accepted ?? false
                     uploaded = resend && !accepted && inputs[job.id] != nil
                     if uploaded, let input = inputs[job.id] {
-                        url = try await service.requestSTL(for: input, name: job.id, in: Self.directory, jobID: job.id, onProgress: progress) { _ in
+                        url = try await service.requestSTL(for: input, name: job.id, in: Self.directory, jobID: job.id, uploads: uploads[job.id], onProgress: progress) { _ in
                             Task { @MainActor in
                                 guard let index = self.jobs.firstIndex(where: { $0.id == job.id }) else { return }
                                 self.jobs[index].accepted = true
@@ -408,8 +411,79 @@ final class PrintBackgroundDownload: NSObject, URLSessionDownloadDelegate, @unch
     }
 }
 
+/// PUTs print files to their signed URLs in a background session, so an upload keeps going while the app is suspended.
+final class PrintBackgroundUpload: NSObject, URLSessionDataDelegate, PrintUploading, @unchecked Sendable {
+    static let shared = PrintBackgroundUpload()
+    static let identifier = "com.lidarscanner.print-uploads"
+    var completionHandler: (() -> Void)?
+    private let lock = NSLock()
+    private var pending: [Int: (continuation: CheckedContinuation<(status: Int, body: Data), Error>, onProgress: @Sendable (Int64) -> Void, body: Data)] = [:]
+    private var session: URLSession!
+
+    override init() {
+        super.init()
+        let configuration = URLSessionConfiguration.background(withIdentifier: Self.identifier)
+        configuration.timeoutIntervalForResource = 3600
+        configuration.isDiscretionary = false
+        configuration.sessionSendsLaunchEvents = true
+        session = URLSession(configuration: configuration, delegate: self, delegateQueue: nil)
+    }
+
+    private final class TaskBox: @unchecked Sendable {
+        let lock = NSLock()
+        var task: URLSessionTask?
+        var cancelled = false
+    }
+
+    func upload(_ request: URLRequest, fromFile file: URL, onProgress: @escaping @Sendable (Int64) -> Void) async throws -> (status: Int, body: Data) {
+        let box = TaskBox()
+        return try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                let task = session.uploadTask(with: request, fromFile: file)
+                lock.withLock { pending[task.taskIdentifier] = (continuation, onProgress, Data()) }
+                let cancelled = box.lock.withLock {
+                    box.task = task
+                    return box.cancelled
+                }
+                task.resume()
+                if cancelled { task.cancel() }
+            }
+        } onCancel: {
+            box.lock.withLock {
+                box.cancelled = true
+                return box.task
+            }?.cancel()
+        }
+    }
+
+    func urlSession(_ session: URLSession, task: URLSessionTask, didSendBodyData bytesSent: Int64, totalBytesSent: Int64, totalBytesExpectedToSend: Int64) {
+        lock.withLock { pending[task.taskIdentifier]?.onProgress }?(totalBytesSent)
+    }
+
+    func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
+        lock.withLock { pending[dataTask.taskIdentifier]?.body.append(data) }
+    }
+
+    func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
+        guard let entry = lock.withLock({ pending.removeValue(forKey: task.taskIdentifier) }) else { return }
+        if let error { entry.continuation.resume(throwing: error); return }
+        entry.continuation.resume(returning: ((task.response as? HTTPURLResponse)?.statusCode ?? 0, entry.body))
+    }
+
+    func urlSessionDidFinishEvents(forBackgroundURLSession session: URLSession) {
+        DispatchQueue.main.async {
+            self.completionHandler?()
+            self.completionHandler = nil
+        }
+    }
+}
+
 final class PrintAppDelegate: NSObject, UIApplicationDelegate {
     func application(_ application: UIApplication, handleEventsForBackgroundURLSession identifier: String, completionHandler: @escaping () -> Void) {
+        if identifier == PrintBackgroundUpload.identifier {
+            PrintBackgroundUpload.shared.completionHandler = completionHandler
+            return
+        }
         guard identifier == PrintBackgroundDownload.identifier else { completionHandler(); return }
         PrintBackgroundDownload.shared.completionHandler = completionHandler
         PrintBackgroundDownload.shared.connect()
