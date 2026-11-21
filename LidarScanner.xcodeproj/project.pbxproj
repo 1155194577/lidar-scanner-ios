@@ -26,6 +26,8 @@
 		85464DBFEC850BAD6CEABBAA /* SampleCube.usdz in Resources */ = {isa = PBXBuildFile; fileRef = 847C4A0C1369226AF4808EE4 /* SampleCube.usdz */; };
 		8667ED2BDD60E0D6F87B2D73 /* PhotoPrintTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5C087DF6219678C4951C8740 /* PhotoPrintTests.swift */; };
 		8798B9B3B8ED9FD73CE5F592 /* ActivityView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C8407C2985E2FFF7986A9BC4 /* ActivityView.swift */; };
+		87F1D42B3348073E27952807 /* PrintJobBanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = D816C91F3745899FFA9D5632 /* PrintJobBanner.swift */; };
+		8D24E52EA9DBE0905CAD9F8B /* PrintJobManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 86C1D1E620A18A53EC63D7A0 /* PrintJobManager.swift */; };
 		96506DE04905D6C3933F26AA /* PhotoPrintView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4030F8493820551CA06FD224 /* PhotoPrintView.swift */; };
 		A04325EBDB113FADD45FEF26 /* ObjectScanCoaching.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5BA44A95E9C07A3E97B33581 /* ObjectScanCoaching.swift */; };
 		ED9CBD58831D55A87F79AA4F /* ExportSample.usdz in Resources */ = {isa = PBXBuildFile; fileRef = FFCD04E0C144E654C31E0E6A /* ExportSample.usdz */; };
@@ -66,6 +68,7 @@
 		5C087DF6219678C4951C8740 /* PhotoPrintTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhotoPrintTests.swift; sourceTree = "<group>"; };
 		745B90CA011A00DEC61B996E /* ObjectScanCoachingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ObjectScanCoachingTests.swift; sourceTree = "<group>"; };
 		847C4A0C1369226AF4808EE4 /* SampleCube.usdz */ = {isa = PBXFileReference; lastKnownFileType = file.usdz; path = SampleCube.usdz; sourceTree = "<group>"; };
+		86C1D1E620A18A53EC63D7A0 /* PrintJobManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PrintJobManager.swift; sourceTree = "<group>"; };
 		87F0A168FB8895BC010B38B4 /* ScanStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScanStoreTests.swift; sourceTree = "<group>"; };
 		943C6B93CDBEF4C325CA7E88 /* LidarScannerApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LidarScannerApp.swift; sourceTree = "<group>"; };
 		9EEA2B6DD210C068DEE835B6 /* LidarScanner.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = LidarScanner.app; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -77,6 +80,7 @@
 		C789F36D9041AF57FD69D61B /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		C8407C2985E2FFF7986A9BC4 /* ActivityView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ActivityView.swift; sourceTree = "<group>"; };
 		CD0AB86940F3D7F42A85C0A6 /* LidarScannerUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LidarScannerUITests.swift; sourceTree = "<group>"; };
+		D816C91F3745899FFA9D5632 /* PrintJobBanner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PrintJobBanner.swift; sourceTree = "<group>"; };
 		DAF2A85F7D7E839B808E7602 /* STLExporterTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = STLExporterTests.swift; sourceTree = "<group>"; };
 		DF61EF62F44AF9D1CC4DAEB5 /* HomeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HomeView.swift; sourceTree = "<group>"; };
 		E49C636CBB0CB09E509412FD /* ObjectScanGuideView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ObjectScanGuideView.swift; sourceTree = "<group>"; };
@@ -113,6 +117,7 @@
 				E49C636CBB0CB09E509412FD /* ObjectScanGuideView.swift */,
 				186B1783B50F7042BF77067E /* ObjectScanView.swift */,
 				4030F8493820551CA06FD224 /* PhotoPrintView.swift */,
+				D816C91F3745899FFA9D5632 /* PrintJobBanner.swift */,
 				B2BE16B613004BEB3D632B32 /* RoomScanView.swift */,
 				A3E8DCDB974B375AADE89EB2 /* ScansListView.swift */,
 				54FB452B361CBD769754AC19 /* SettingsView.swift */,
@@ -125,7 +130,7 @@
 			children = (
 				B8BFDFCA721B0D943DB447DC /* DeviceSupport.swift */,
 				4ADE67AD7F6A66051B9B8B61 /* KeychainStore.swift */,
-				5BA44A95E9C07A3E97B33581 /* ObjectScanCoaching.swift */,
+				86C1D1E620A18A53EC63D7A0 /* PrintJobManager.swift */,
 				0948124D94F88A05132C8D1C /* PrintService.swift */,
 				5AEE1F5D3FC4825BDA978F4C /* ScanStore.swift */,
 				B758C4696E00787E91415462 /* STLExporter.swift */,
@@ -339,6 +344,8 @@
 				0DC82092F32565199032FEAF /* ObjectScanGuideView.swift in Sources */,
 				15A21CE618630EE491C5B685 /* ObjectScanView.swift in Sources */,
 				96506DE04905D6C3933F26AA /* PhotoPrintView.swift in Sources */,
+				87F1D42B3348073E27952807 /* PrintJobBanner.swift in Sources */,
+				8D24E52EA9DBE0905CAD9F8B /* PrintJobManager.swift in Sources */,
 				4C5367025D965D1E2158BDC9 /* PrintService.swift in Sources */,
 				F5E1F4B69A346854F7F23658 /* RoomScanView.swift in Sources */,
 				74F3DA10CEEDBA6012D63E72 /* STLExporter.swift in Sources */,

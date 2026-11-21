@@ -1,5 +1,13 @@
 import Foundation
 
+struct PrintProgress: Equatable, Codable {
+    let stage: String
+    let message: String
+    let progress: Double?
+
+    static let uploading = PrintProgress(stage: "uploading", message: "Uploading to print server", progress: 0)
+}
+
 /// What gets sent to the print endpoint: a scan's mesh, or a single photo plus the LiDAR-measured object height.
 enum PrintInput {
     case mesh(URL)
@@ -10,9 +18,15 @@ enum PrintError: LocalizedError, Equatable {
     case invalidBaseURL(String)
     case server(status: Int, message: String)
     case unexpectedResponse(String)
+    case jobFailed(String)
+    case lostContact
+    case serverChanged
 
     var errorDescription: String? {
         switch self {
+        case .serverChanged: return "Print server changed in Settings; print again"
+        case .jobFailed(let detail): return detail
+        case .lostContact: return "Lost contact with the print server. Please retry."
         case .invalidBaseURL(let value):
             return "\"\(value)\" isn't a valid print server URL. Set it in Settings."
         case .server(401, _):
@@ -26,7 +40,11 @@ enum PrintError: LocalizedError, Equatable {
 }
 
 /// Client for `POST {baseURL}/print`: multipart `mesh` (OBJ, PLY or USDZ, in metres) or `photo` + `height_mm`,
-/// authorised with `Authorization: Bearer <token>`, answered with `model/stl` (errors are JSON `{"detail"}`).
+/// Authorised with Bearer token; accepts NDJSON progress, then done (base64 STL) or error detail.
+/// Unknown events are ignored; missing terminal events and 10 s without a line fail. Legacy model/stl
+/// responses and non-2xx JSON detail errors remain supported. The overall request deadline is 600 s.
+/// Async jobs include a client UUID `job_id` in the unchanged multipart form. `accepted` acknowledges it;
+/// GET /print/{id} replays the stream, and GET /print/{id}/result long-polls an STL (or JSON error).
 struct PrintService {
     static let baseURLKey = "printBaseURL"
     static let tokenKey = "printAPIToken"
@@ -49,8 +67,9 @@ struct PrintService {
     let endpoint: URL
     private let token: String?
     private let session: URLSession
+    private let stallTimeout: TimeInterval
 
-    init(baseURL: String = PrintService.configuredBaseURL, token: String? = PrintService.configuredToken, session: URLSession = .shared) throws {
+    init(baseURL: String = PrintService.configuredBaseURL, token: String? = PrintService.configuredToken, session: URLSession = .shared, stallTimeout: TimeInterval = 10) throws {
         let trimmed = baseURL.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let url = URL(string: trimmed), let scheme = url.scheme?.lowercased(),
               ["http", "https"].contains(scheme), url.host?.isEmpty == false else {
@@ -59,10 +78,12 @@ struct PrintService {
         endpoint = url.appendingPathComponent("print")
         self.token = token
         self.session = session
+        self.stallTimeout = stallTimeout
     }
 
-    func makeRequest(for input: PrintInput, boundary: String = "Boundary-\(UUID().uuidString)") throws -> URLRequest {
+    func makeRequest(for input: PrintInput, boundary: String = "Boundary-\(UUID().uuidString)", jobID: String? = nil) throws -> URLRequest {
         var form = MultipartForm(boundary: boundary)
+        if let jobID { form.addField(name: "job_id", value: jobID) }
         switch input {
         case .mesh(let url):
             form.addFile(name: "mesh", fileName: url.lastPathComponent, contentType: Self.contentType(for: url), data: try Data(contentsOf: url))
@@ -74,7 +95,7 @@ struct PrintService {
         var request = URLRequest(url: endpoint, timeoutInterval: 600)
         request.httpMethod = "POST"
         request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
-        request.setValue("model/stl", forHTTPHeaderField: "Accept")
+        request.setValue("application/x-ndjson, model/stl", forHTTPHeaderField: "Accept")
         if let token {
             request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         }
@@ -83,20 +104,37 @@ struct PrintService {
     }
 
     /// Uploads the input and writes the returned STL to `directory/<name>.stl`.
-    func requestSTL(for input: PrintInput, name: String, in directory: URL = PrintService.outputDirectory) async throws -> URL {
-        let (data, response) = try await session.data(for: try makeRequest(for: input))
-        guard let http = response as? HTTPURLResponse else {
-            throw PrintError.unexpectedResponse("no HTTP response")
-        }
-        guard (200..<300).contains(http.statusCode) else {
-            throw PrintError.server(status: http.statusCode, message: Self.errorMessage(from: data))
-        }
-        let mimeType = http.mimeType?.lowercased() ?? ""
-        guard ["model/stl", "application/sla", "application/vnd.ms-pki.stl", "application/octet-stream"].contains(mimeType) else {
-            throw PrintError.unexpectedResponse(mimeType.isEmpty ? "no content type" : mimeType)
-        }
-        guard !data.isEmpty else {
-            throw PrintError.unexpectedResponse("empty body")
+    func requestSTL(for input: PrintInput, name: String, in directory: URL = PrintService.outputDirectory,
+                    jobID: String? = nil,
+                    onProgress: @escaping @Sendable (PrintProgress) -> Void = { _ in },
+                    onAccepted: @escaping @Sendable (String) -> Void = { _ in }) async throws -> URL {
+        try await receive(try makeRequest(for: input, jobID: jobID), name: name, in: directory, onProgress: onProgress, onAccepted: onAccepted)
+    }
+
+    enum JobRoute: String { case events = "", result }
+
+    func jobRequest(id: String, route: JobRoute = .events) -> URLRequest {
+        var url = endpoint.appendingPathComponent(id)
+        if !route.rawValue.isEmpty { url.appendPathComponent(route.rawValue) }
+        var request = URLRequest(url: url, timeoutInterval: route == .result ? 86400 : 600)
+        request.setValue(route == .result ? "model/stl" : "application/x-ndjson", forHTTPHeaderField: "Accept")
+        if let token { request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization") }
+        return request
+    }
+
+    func reattach(id: String, name: String, in directory: URL = PrintService.outputDirectory,
+                  onProgress: @escaping @Sendable (PrintProgress) -> Void = { _ in }) async throws -> URL {
+        try await receive(jobRequest(id: id), name: name, in: directory, onProgress: onProgress, onAccepted: { _ in })
+    }
+
+    private func receive(_ request: URLRequest, name: String, in directory: URL,
+                         onProgress: @escaping @Sendable (PrintProgress) -> Void,
+                         onAccepted: @escaping @Sendable (String) -> Void) async throws -> URL {
+        let transfer = PrintTransfer(configuration: session.configuration, stallTimeout: stallTimeout, onProgress: onProgress, onAccepted: onAccepted)
+        let data = try await withTaskCancellationHandler {
+            try await transfer.run(request)
+        } onCancel: {
+            transfer.cancel()
         }
 
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -117,6 +155,14 @@ struct PrintService {
         return String(decoding: data.prefix(300), as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
+    static func failureMessage(_ error: Error) -> String {
+        let message = error.localizedDescription
+        if (error as? URLError)?.code == .unknown || message.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == "unknown error" {
+            return "Couldn't contact the print server. Check your connection and retry."
+        }
+        return message
+    }
+
     static var outputDirectory: URL {
         FileManager.default.temporaryDirectory.appendingPathComponent("Prints", isDirectory: true)
     }
@@ -128,6 +174,153 @@ struct PrintService {
         case "ply": return "application/x-ply"
         default: return "application/octet-stream"
         }
+    }
+}
+
+private final class PrintTransfer: NSObject, URLSessionDataDelegate, @unchecked Sendable {
+    private let queue = DispatchQueue(label: "PrintTransfer")
+    private let configuration: URLSessionConfiguration
+    private let stallTimeout: TimeInterval
+    private let onProgress: @Sendable (PrintProgress) -> Void
+    private let onAccepted: @Sendable (String) -> Void
+    private var session: URLSession?
+    private var continuation: CheckedContinuation<Data, Error>?
+    private var response: HTTPURLResponse?
+    private var buffer = Data()
+    private var watchdog: DispatchWorkItem?
+    private var deadline: DispatchWorkItem?
+    private var cancelled = false
+
+    init(configuration: URLSessionConfiguration, stallTimeout: TimeInterval, onProgress: @escaping @Sendable (PrintProgress) -> Void, onAccepted: @escaping @Sendable (String) -> Void) {
+        self.configuration = configuration
+        self.stallTimeout = stallTimeout
+        self.onProgress = onProgress
+        self.onAccepted = onAccepted
+    }
+
+    func run(_ request: URLRequest) async throws -> Data {
+        try await withCheckedThrowingContinuation { continuation in
+            queue.async {
+                self.continuation = continuation
+                if self.cancelled { self.finish(.failure(CancellationError())); return }
+                let delegateQueue = OperationQueue()
+                delegateQueue.maxConcurrentOperationCount = 1
+                delegateQueue.underlyingQueue = self.queue
+                self.session = URLSession(configuration: self.configuration, delegate: self, delegateQueue: delegateQueue)
+                let deadline = DispatchWorkItem { self.finish(.failure(URLError(.timedOut))) }
+                self.deadline = deadline
+                self.queue.asyncAfter(deadline: .now() + 600, execute: deadline)
+                self.onProgress(.uploading)
+                self.session?.dataTask(with: request).resume()
+            }
+        }
+    }
+
+    func cancel() {
+        queue.async {
+            self.cancelled = true
+            self.finish(.failure(CancellationError()))
+        }
+    }
+
+    private var streaming: Bool {
+        response?.mimeType?.lowercased() == "application/x-ndjson" && (200..<300).contains(response?.statusCode ?? 0)
+    }
+
+    private func resetWatchdog() {
+        watchdog?.cancel()
+        let work = DispatchWorkItem {
+            self.finish(.failure(PrintError.lostContact))
+        }
+        watchdog = work
+        queue.asyncAfter(deadline: .now() + stallTimeout, execute: work)
+    }
+
+    private func finish(_ result: Result<Data, Error>) {
+        guard let continuation else { return }
+        self.continuation = nil
+        watchdog?.cancel()
+        deadline?.cancel()
+        watchdog = nil
+        deadline = nil
+        session?.invalidateAndCancel()
+        session = nil
+        continuation.resume(with: result)
+    }
+
+    func urlSession(_ session: URLSession, task: URLSessionTask, didSendBodyData bytesSent: Int64, totalBytesSent: Int64, totalBytesExpectedToSend: Int64) {
+        guard continuation != nil, response == nil, totalBytesExpectedToSend > 0 else { return }
+        onProgress(PrintProgress(stage: "uploading", message: "Uploading to print server", progress: min(1, Double(totalBytesSent) / Double(totalBytesExpectedToSend))))
+        if totalBytesSent >= totalBytesExpectedToSend {
+            onProgress(PrintProgress(stage: "waiting", message: "Waiting for print server", progress: nil))
+        }
+    }
+
+    func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive response: URLResponse, completionHandler: @escaping (URLSession.ResponseDisposition) -> Void) {
+        self.response = response as? HTTPURLResponse
+        if streaming { resetWatchdog() } else { watchdog?.cancel() }
+        completionHandler(.allow)
+    }
+
+    func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
+        guard continuation != nil else { return }
+        buffer.append(data)
+        guard streaming else { return }
+        if !data.isEmpty { resetWatchdog() }
+        while let newline = buffer.firstIndex(of: 10), continuation != nil {
+            let line = Data(buffer[..<newline])
+            buffer.removeSubrange(...newline)
+            if !line.isEmpty { parse(line) }
+        }
+    }
+
+    private struct Event: Decodable {
+        let type: String
+        let stage: String?
+        let message: String?
+        let progress: Double?
+        let detail: String?
+        let stl_base64: String?
+        let job_id: String?
+    }
+
+    private func parse(_ line: Data) {
+        do {
+            struct Envelope: Decodable { let type: String }
+            let type = try JSONDecoder().decode(Envelope.self, from: line).type
+            guard ["accepted", "progress", "error", "done"].contains(type) else { return }
+            let event = try JSONDecoder().decode(Event.self, from: line)
+            switch event.type {
+            case "accepted":
+                if let id = event.job_id, !id.isEmpty { onAccepted(id) }
+            case "progress":
+                onProgress(PrintProgress(stage: event.stage ?? "", message: event.message ?? event.stage ?? "Processing", progress: event.progress.map { min(1, max(0, $0)) }))
+            case "error":
+                finish(.failure(PrintError.jobFailed(event.detail ?? "Printing failed")))
+            case "done":
+                guard let encoded = event.stl_base64, let data = Data(base64Encoded: encoded), !data.isEmpty else {
+                    throw PrintError.unexpectedResponse("missing or invalid STL data")
+                }
+                finish(.success(data))
+            default: break
+            }
+        } catch { finish(.failure(error)) }
+    }
+
+    func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
+        guard continuation != nil else { return }
+        if let error { finish(.failure(error)); return }
+        guard let response else { finish(.failure(PrintError.unexpectedResponse("no HTTP response"))); return }
+        if !(200..<300).contains(response.statusCode) {
+            finish(.failure(PrintError.server(status: response.statusCode, message: PrintService.errorMessage(from: buffer))))
+        } else if streaming {
+            if !buffer.isEmpty { parse(buffer) }
+            finish(.failure(PrintError.unexpectedResponse("stream ended without a terminal event")))
+        } else if !["model/stl", "application/sla", "application/vnd.ms-pki.stl", "application/octet-stream"].contains(response.mimeType?.lowercased() ?? "") {
+            finish(.failure(PrintError.unexpectedResponse(response.mimeType ?? "no content type")))
+        } else if buffer.isEmpty {
+            finish(.failure(PrintError.unexpectedResponse("empty body")))
+        } else { finish(.success(buffer)) }
     }
 }
 

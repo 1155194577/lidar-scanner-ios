@@ -35,23 +35,65 @@ Apps signed with a free Personal Team expire after 7 days; reconnect the phone a
 
 ## Printing a scan
 
-Tap the printer icon on a scan in **My Scans**. When the print server returns an STL, tap **Save to Scan** to keep it with the original scan or **Share STL** to send it to a slicer app (or *Save to Files*). Tap the scan to find and share its saved STL later. Saving another print for that scan replaces the previous STL. For **Photo Print**, **Save to My Scans** adds a separate entry under **Photo Prints**.
+Tap the printer icon on a scan in **My Scans**, or **Take Photo & Print** in Photo Print.
+Printing runs as an app-wide job: you can close the photo screen, return Home, or start a
+Room/Object scan while it works. A compact banner follows you across screens. Tap
+**STL ready — Share** when finished to send the file to a slicer or *Save to Files*.
 
 Set the server and token in **Settings** (gear icon on the home screen). The default server is `https://slesvci--3d-print-web.us-east.modal.run`, set by `PRINT_BASE_URL` in `project.yml`; the token (`PRINT_API_TOKEN`) is kept in the Keychain. The app calls:
 
 ```
 POST {server}/print   multipart/form-data, Authorization: Bearer <token>
   mesh=<scan .usdz, metres>          (or photo=<jpeg> + height_mm=<number>)
-→ 200 model/stl  (X-Print-Report header); errors are JSON {"detail"}
+Accept: application/x-ndjson, model/stl
+→ 200 application/x-ndjson (one JSON event per line), or legacy model/stl
+→ non-2xx pre-work errors: JSON {"detail"}
 ```
 
-A cold start of the live server takes about 2 minutes, so the first print can be slow.
+The progress bar first shows the real upload fraction, then the server's stage message and
+percentage (or a spinner when the fraction is unknown). Server stages are strings, such as
+upload, background removal, TripoSR, depth fusion, repair and export. Progress events have
+`{"type":"progress","stage":"repair","message":"Repairing mesh","progress":0.7}`
+(`progress` may be null). The terminal event is either
+`{"type":"done","filename":"x.stl","report":{},"stl_base64":"..."}` or
+`{"type":"error","detail":"reason"}`. Unknown event types/fields are ignored.
+The server should send a line at least every 2 seconds. A stream ending without a terminal
+event, or 10 seconds without a line after streaming begins, reconnects up to twice before
+showing the failure detail with Retry/Dismiss actions. Each stream's overall timeout remains
+600 seconds. Old servers returning
+`model/stl` still work, with upload progress followed by a wait for the response.
+
+Each POST includes a client-generated `job_id` UUID. The server acknowledges with
+`{"type":"accepted","job_id":"..."}` and keeps working if the connection drops.
+Reposting the same id joins that job. `GET /print/{id}` with the same Bearer token and
+`Accept: application/x-ndjson` replays current progress and streams to the same terminal
+event. `GET /print/{id}/result` waits until completion and returns `model/stl` (redirects
+are followed), or non-2xx JSON `{"detail"}`; unknown/expired jobs return 404. Jobs are
+retained by the server for 24 hours. There is no `Prefer: respond-async` or `/jobs` route.
+
+The app saves job ids/names/kinds/server URLs and finished results across launches. When
+backgrounded after acceptance, it starts an iOS background-session download of the result;
+iOS can wake the app to save it and post a local notification (permission is requested at
+the first print). Foregrounding/relaunching restores jobs and reconnects streams. Stream
+and background-download completions are deduplicated. iOS grants only limited background
+time to finish the initial upload: wait for server acceptance before leaving on a slow
+connection. Force-quitting the app can cancel iOS background transfers; reopen it to
+reattach. Notification delivery requires permission. Retry after a server failure creates
+a fresh job while reconnect retries reuse the id. Original photo/mesh inputs are kept only
+in memory: after relaunch Retry reconnects the saved job; resubmit if it has expired.
 
 For offline development, run the stub, which answers every valid request with a 20 mm cube:
 
 ```sh
 python3 scripts/print_stub.py --token stub-token   # listens on port 8765
 ```
+
+The stub streams stages over `--delay` seconds (default 12), flushing a heartbeat at least
+every 2 seconds, and still supports legacy STL clients. Use `--fail-stage repair` for a
+mid-stream error, or set the app's server URL to `http://127.0.0.1:8765/fail` to exercise
+failure/Retry UI against the same stub instance. No second stub is required by the UI tests.
+It keeps jobs in memory, supports replay/result routes and idempotent submissions, and
+continues processing after a client disconnects. Restarting it clears its jobs.
 
 Then set Settings to `http://localhost:8765` (simulator) or your Mac's address, e.g. `http://192.168.1.20:8765` (iPhone, allow local network access when asked), with token `stub-token`.
 
