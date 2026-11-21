@@ -250,6 +250,26 @@ final class PrintServiceTests: XCTestCase {
         XCTAssertEqual(manager.jobs.first?.error, "Print server changed in Settings; print again")
     }
 
+    @MainActor
+    func testDownloadFailureDoesNotDefeatRunningStream() async throws {
+        let suite = "PrintJobs-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let job = PrintJob(id: UUID().uuidString, name: "Concurrent", kind: "photo", baseURL: PrintService.configuredBaseURL)
+        defaults.set(try JSONEncoder().encode([job]), forKey: "printJobs")
+        StubProtocol.handler = { _ in (200, "application/x-ndjson", Data((#"{"type":"done","stl_base64":"c3Rs"}"# + "\n").utf8)) }
+        let manager = PrintJobManager(defaults: defaults, notifications: false, makeService: { _ in try self.service() })
+        manager.sceneChanged(.active)
+        manager.complete(id: job.id, result: .failure(URLError(.networkConnectionLost)), source: .download)
+        XCTAssertNil(manager.jobs.first?.error)
+        manager.complete(id: job.id, result: .failure(URLError(.cancelled)), source: .download)
+        XCTAssertNil(manager.jobs.first?.error)
+        let ready = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in manager.jobs.first?.result != nil }, object: nil)
+        await fulfillment(of: [ready], timeout: 2)
+        XCTAssertNil(manager.jobs.first?.error)
+        manager.dismiss(manager.jobs[0])
+    }
+
     func testBackgroundDownloadResponseHandling() throws {
         let file = directory.appendingPathComponent("download")
         let url = URL(string: "http://print.test/result")!

@@ -21,6 +21,7 @@ final class PrintJobManager: ObservableObject {
     @Published private(set) var jobs: [PrintJob] = []
     private var inputs: [String: PrintInput] = [:]
     private var tasks: [String: Task<Void, Never>] = [:]
+    private var downloads = Set<String>()
     private var tokens: [String: String] = [:]
     private var backgroundTask: UIBackgroundTaskIdentifier = .invalid
     private var active = UIApplication.shared.applicationState == .active
@@ -73,6 +74,7 @@ final class PrintJobManager: ObservableObject {
         inputs.removeValue(forKey: job.id)
         tokens.removeValue(forKey: job.id)
         PrintBackgroundDownload.shared.cancel(id: job.id)
+        downloads.remove(job.id)
         persist()
     }
 
@@ -163,8 +165,20 @@ final class PrintJobManager: ObservableObject {
         }
     }
 
-    func complete(id: String, result: Result<URL, Error>) {
+    enum Transfer { case stream, download }
+
+    func complete(id: String, result: Result<URL, Error>, source: Transfer = .stream) {
         guard let index = jobs.firstIndex(where: { $0.id == id }), !jobs[index].isFinished else { return }
+        if source == .download { downloads.remove(id) }
+        if case .failure(let error) = result {
+            if source == .stream { tasks[id] = nil }
+            if error is CancellationError || (error as? URLError)?.code == .cancelled { return }
+            var terminal = false
+            if case PrintError.jobFailed = error { terminal = true }
+            if case PrintError.server(422, _) = error { terminal = true }
+            if case PrintError.serverChanged = error { terminal = true }
+            if !terminal, tasks[id] != nil || downloads.contains(id) { return }
+        }
         switch result {
         case .success(let url):
             do {
@@ -183,6 +197,7 @@ final class PrintJobManager: ObservableObject {
         persist()
         tasks.removeValue(forKey: id)?.cancel()
         PrintBackgroundDownload.shared.cancel(id: id)
+        downloads.remove(id)
         if jobs.allSatisfy(\.isFinished) { endBackgroundTask() }
         if !active, notifications {
             let content = UNMutableNotificationContent()
@@ -195,6 +210,7 @@ final class PrintJobManager: ObservableObject {
 
     private func startDownload(_ job: PrintJob) {
         guard let request = try? service(job).jobRequest(id: job.id, route: .result) else { return }
+        downloads.insert(job.id)
         PrintBackgroundDownload.shared.start(id: job.id, request: request)
     }
 
@@ -262,12 +278,12 @@ final class PrintBackgroundDownload: NSObject, URLSessionDownloadDelegate, @unch
     func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didFinishDownloadingTo location: URL) {
         guard let id = downloadTask.taskDescription else { return }
         let result = Result { try Self.saveResponse(downloadTask.response, file: location, id: id) }
-        Task { @MainActor in PrintJobManager.shared.complete(id: id, result: result) }
+        Task { @MainActor in PrintJobManager.shared.complete(id: id, result: result, source: .download) }
     }
 
     func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
         guard let error, let id = task.taskDescription else { return }
-        Task { @MainActor in PrintJobManager.shared.complete(id: id, result: .failure(error)) }
+        Task { @MainActor in PrintJobManager.shared.complete(id: id, result: .failure(error), source: .download) }
     }
 
     func urlSessionDidFinishEvents(forBackgroundURLSession session: URLSession) {
