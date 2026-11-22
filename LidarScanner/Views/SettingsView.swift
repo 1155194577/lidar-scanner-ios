@@ -5,6 +5,8 @@ struct SettingsView: View {
     @AppStorage(PrintService.baseURLKey) private var printBaseURL = PrintService.defaultBaseURL
     @AppStorage(FaceScanModel.turnHeadKey) private var faceTurnHead = false
     @AppStorage(PrintService.optimiseKey) private var optimise = false
+    @AppStorage(OnDeviceTripoSR.enabledKey) private var onDevicePrint = false
+    @ObservedObject private var onDeviceModel = OnDeviceModelStore.shared
     @State private var printToken = KeychainStore.read(PrintService.tokenKey) ?? ""
 
     var body: some View {
@@ -39,6 +41,15 @@ struct SettingsView: View {
                     Text("Ask a compatible print server to remove material from object scans and Photo Prints. Check strength before using an optimised part under load.")
                 }
                 Section {
+                    Toggle("Build photo prints on this iPhone", isOn: $onDevicePrint)
+                        .accessibilityIdentifier("onDevicePrintToggle")
+                    onDeviceModelRow
+                } header: {
+                    Text("Offline Photo Print")
+                } footer: {
+                    Text("Runs the TripoSR model on the iPhone with no internet: a one-time \(OnDeviceModelStore.downloadMB) MB download. It sizes the print from your height measurement only; the print server also fits it to the LiDAR depth and repairs the mesh.")
+                }
+                Section {
                     Toggle("Turn-your-head capture", isOn: $faceTurnHead)
                         .accessibilityIdentifier("faceTurnHeadToggle")
                 } header: {
@@ -55,6 +66,26 @@ struct SettingsView: View {
                         .accessibilityIdentifier("settingsDoneButton")
                 }
             }
+        }
+    }
+
+    @ViewBuilder private var onDeviceModelRow: some View {
+        switch onDeviceModel.state {
+        case .missing:
+            Button("Download Model (\(OnDeviceModelStore.downloadMB) MB)") { onDeviceModel.download() }
+                .accessibilityIdentifier("downloadOnDeviceModel")
+        case .downloading(let fraction):
+            HStack {
+                ProgressView(value: fraction)
+                Button("Cancel") { onDeviceModel.cancel() }
+            }
+        case .installing:
+            HStack { ProgressView(); Text("Preparing the model") }
+        case .ready:
+            Button("Delete Model", role: .destructive) { onDeviceModel.delete() }
+        case .failed(let message):
+            Text(message).foregroundStyle(.red)
+            Button("Try Again") { onDeviceModel.download() }
         }
     }
 

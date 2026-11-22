@@ -266,6 +266,10 @@ final class PhotoPrintModel: ObservableObject {
             errorMessage = "Couldn't take the photo. Try again."
             return
         }
+        if OnDeviceTripoSR.isAvailable, let height = heightMM {
+            manager.startOnDevice(photo: shot.checkPhoto, heightMM: height, name: Self.fileName())
+            return
+        }
         isPrinting = true
         printTask = Task {
             // The check is advisory: if it fails or times out, print anyway.

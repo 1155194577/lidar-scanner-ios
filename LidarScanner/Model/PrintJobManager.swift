@@ -21,12 +21,14 @@ struct PrintJob: Identifiable, Codable {
     var retryFromStart = false
     /// The server refused the submission (a 4xx other than 404/408/429), so it holds no job to re-attach to.
     var rejected = false
+    /// Built on the phone by `OnDeviceTripoSR`; never sent to the print server.
+    var onDevice = false
     var isFinished: Bool { result != nil || error != nil }
 }
 
 extension PrintJob {
     private enum CodingKeys: String, CodingKey {
-        case id, name, kind, baseURL, sourceScanFileName, optimise, optimisation, progress, resultPath, result, error, accepted, retryFromStart, rejected
+        case id, name, kind, baseURL, sourceScanFileName, optimise, optimisation, progress, resultPath, result, error, accepted, retryFromStart, rejected, onDevice
     }
 
     init(from decoder: Decoder) throws {
@@ -48,6 +50,7 @@ extension PrintJob {
         accepted = try values.decodeIfPresent(Bool.self, forKey: .accepted) ?? false
         retryFromStart = try values.decodeIfPresent(Bool.self, forKey: .retryFromStart) ?? false
         rejected = try values.decodeIfPresent(Bool.self, forKey: .rejected) ?? false
+        onDevice = try values.decodeIfPresent(Bool.self, forKey: .onDevice) ?? false
         if error == PrintError.serverChanged.localizedDescription { retryFromStart = false }
     }
 
@@ -66,6 +69,7 @@ extension PrintJob {
         try values.encode(accepted, forKey: .accepted)
         try values.encode(retryFromStart, forKey: .retryFromStart)
         try values.encode(rejected, forKey: .rejected)
+        try values.encode(onDevice, forKey: .onDevice)
     }
 }
 
@@ -78,6 +82,7 @@ final class PrintJobManager: ObservableObject {
     private var shownUploads = Set<String>()
     private var shownResults = Set<String>()
     private var inputs: [String: PrintInput] = [:]
+    private var onDeviceInputs: [String: (photo: Data, heightMM: Double)] = [:]
     private var payloads: [String: PrintPayload] = [:]
     private var tasks: [String: Task<Void, Never>] = [:]
     private var downloads = Set<String>()
@@ -102,7 +107,12 @@ final class PrintJobManager: ObservableObject {
             for key in ["printJobs", "printUploadConfirmations", "printConfirmedJobs"] { defaults.removeObject(forKey: key) }
         }
         if let data = defaults.data(forKey: "printJobs"), let saved = try? JSONDecoder().decode([PrintJob].self, from: data) {
-            jobs = saved
+            jobs = saved.map { job in
+                var job = job
+                // An on-device build stops with the app, so it can't be resumed after a relaunch.
+                if job.onDevice, !job.isFinished { job.error = "Stopped before it finished. Take the photo again." }
+                return job
+            }
         }
         if let data = defaults.data(forKey: "printUploadConfirmations"),
            let saved = try? JSONDecoder().decode([String: [String: PrintService.UploadReference]].self, from: data) {
@@ -137,6 +147,36 @@ final class PrintJobManager: ObservableObject {
         run(job, submit: true)
     }
 
+    /// Builds a photo print on the phone with `OnDeviceTripoSR`, with no print server.
+    func startOnDevice(photo: Data, heightMM: Double, name: String) {
+        var job = PrintJob(id: UUID().uuidString, name: name, kind: "photo", baseURL: PrintService.configuredBaseURL)
+        job.onDevice = true
+        job.progress = PrintProgress(stage: "background", message: "Building on this iPhone", progress: nil)
+        jobs.append(job)
+        onDeviceInputs[job.id] = (photo, heightMM)
+        persist()
+        runOnDevice(job)
+    }
+
+    private func runOnDevice(_ job: PrintJob) {
+        guard tasks[job.id] == nil, let input = onDeviceInputs[job.id] else { return }
+        // Backgrounding is covered by the scene-phase background task, which `complete` ends.
+        tasks[job.id] = Task {
+            if let authorize { await authorize() }
+            else if notifications { _ = try? await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) }
+            do {
+                let url = try await OnDeviceTripoSR.makeSTL(photo: input.photo, heightMM: input.heightMM) { progress in
+                    Task { @MainActor in self.update(job.id, progress: progress) }
+                }
+                complete(id: job.id, result: .success(url))
+                try? FileManager.default.removeItem(at: url)
+            } catch {
+                complete(id: job.id, result: .failure(error))
+            }
+            tasks[job.id] = nil
+        }
+    }
+
     private static func payloadFolder(_ id: String) -> URL {
         directory.appendingPathComponent(id, isDirectory: true).appendingPathComponent("payload", isDirectory: true)
     }
@@ -157,12 +197,13 @@ final class PrintJobManager: ObservableObject {
             }
         }
         for job in jobs where !job.isFinished && !job.accepted && tasks[job.id] == nil && uploadConfirmations[job.id] == nil
-            && payload(for: job.id) != nil {
+            && !job.onDevice && payload(for: job.id) != nil {
             run(job, submit: true)
         }
     }
 
     func canRetry(_ job: PrintJob) -> Bool {
+        if job.onDevice { return onDeviceInputs[job.id] != nil }
         let restartable = inputs[job.id] != nil || payload(for: job.id) != nil
         if job.rejected && !restartable { return false }
         return !(job.retryFromStart || job.baseURL != PrintService.configuredBaseURL) || restartable
@@ -206,6 +247,14 @@ final class PrintJobManager: ObservableObject {
 
     func retry(_ job: PrintJob) {
         guard canRetry(job) else { return }
+        if job.onDevice {
+            guard let index = jobs.firstIndex(where: { $0.id == job.id }) else { return }
+            jobs[index].error = nil
+            jobs[index].progress = PrintProgress(stage: "background", message: "Building on this iPhone", progress: nil)
+            persist()
+            runOnDevice(jobs[index])
+            return
+        }
         if job.retryFromStart || job.baseURL != PrintService.configuredBaseURL {
             let input = inputs[job.id]
             guard let payload = payload(for: job.id) ?? input.flatMap({ try? PrintService.payload(for: $0, optimise: job.optimise) }) else {
@@ -232,6 +281,7 @@ final class PrintJobManager: ObservableObject {
         tasks.removeValue(forKey: job.id)?.cancel()
         jobs.removeAll { $0.id == job.id }
         inputs.removeValue(forKey: job.id)
+        onDeviceInputs.removeValue(forKey: job.id)
         payloads.removeValue(forKey: job.id)
         PrintUploadState.discard(job.id)
         uploadConfirmations.removeValue(forKey: job.id)
@@ -253,13 +303,13 @@ final class PrintJobManager: ObservableObject {
             backgroundTask = UIApplication.shared.beginBackgroundTask(withName: "Print stream") { [weak self] in
                 Task { @MainActor in self?.endBackgroundTask() }
             }
-            for job in jobs where !job.isFinished && job.accepted { startDownload(job) }
+            for job in jobs where !job.isFinished && job.accepted && !job.onDevice { startDownload(job) }
         } else if phase == .active {
             endBackgroundTask()
             PrintBackgroundDownload.shared.connect { ids in
                 Task { @MainActor in
                     self.downloads.formUnion(ids)
-                    for job in self.jobs where !job.isFinished && self.tasks[job.id] == nil && self.uploadConfirmations[job.id] == nil {
+                    for job in self.jobs where !job.isFinished && !job.onDevice && self.tasks[job.id] == nil && self.uploadConfirmations[job.id] == nil {
                         self.run(job, submit: !job.accepted && self.payload(for: job.id) != nil)
                     }
                 }
@@ -364,7 +414,7 @@ final class PrintJobManager: ObservableObject {
     private func update(_ id: String, progress: PrintProgress) {
         guard let index = jobs.firstIndex(where: { $0.id == id }), !jobs[index].isFinished else { return }
         jobs[index].progress = progress
-        if !jobs[index].accepted, !["uploading", "waiting", "reconnecting"].contains(progress.stage) {
+        if !jobs[index].onDevice, !jobs[index].accepted, !["uploading", "waiting", "reconnecting"].contains(progress.stage) {
             jobs[index].accepted = true
             persist()
             if !active { startDownload(jobs[index]) }
