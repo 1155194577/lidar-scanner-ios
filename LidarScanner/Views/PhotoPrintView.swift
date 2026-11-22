@@ -101,6 +101,8 @@ struct PrintedModel: Identifiable {
     var sourceScanFileName: String? = nil
     var sourceScan: ScanFile? = nil
     var kind: ScanKind = .photo
+    var optimisationRequested = false
+    var optimisation: PrintOptimisation?
     var id: URL { url }
 
     @MainActor
@@ -127,6 +129,16 @@ struct PrintResultView: View {
     @State private var saveError: String?
     let model: PrintedModel
 
+    private var optimisationSummary: String {
+        if let reason = model.optimisation?.skipped, !reason.isEmpty {
+            return "Skipped: \(reason)"
+        }
+        if let percent = model.optimisation?.volumeSavedPct, (0...100).contains(percent) {
+            return "\((percent / 100).formatted(.percent.precision(.fractionLength(0...1)))) less model volume"
+        }
+        return "The server did not report material savings."
+    }
+
     var body: some View {
         NavigationStack {
             List {
@@ -134,6 +146,12 @@ struct PrintResultView: View {
                     STLPreview(url: model.url)
                         .listRowInsets(EdgeInsets())
                     Label(model.url.lastPathComponent, systemImage: "doc")
+                }
+                if model.optimisationRequested {
+                    Section("Material Savings") {
+                        Text(optimisationSummary)
+                            .accessibilityIdentifier("printOptimisationSummary")
+                    }
                 }
                 Section {
                     if isSaved {
@@ -285,7 +303,7 @@ final class PhotoPrintModel: ObservableObject {
 
     private func upload(_ shot: Shot, using manager: PrintJobManager) {
         guard let height = heightMM else { return }
-        manager.start(input: .photo(shot.photo, heightMM: height, pose: shot.pose, depth: shot.depth), name: Self.fileName(), kind: "photo")
+        manager.start(input: .photo(shot.photo, heightMM: height, pose: shot.pose, depth: shot.depth), name: Self.fileName(), kind: "photo", allowsOptimisation: true)
     }
 
     private func finishPrinting() {

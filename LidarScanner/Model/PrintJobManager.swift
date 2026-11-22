@@ -8,6 +8,8 @@ struct PrintJob: Identifiable, Codable {
     let kind: String
     let baseURL: String
     var sourceScanFileName: String?
+    var optimise = false
+    var optimisation: PrintOptimisation?
     var progress = PrintProgress.uploading
     var resultPath: String?
     var result: URL? {
@@ -26,7 +28,7 @@ struct PrintJob: Identifiable, Codable {
 
 extension PrintJob {
     private enum CodingKeys: String, CodingKey {
-        case id, name, kind, baseURL, sourceScanFileName, progress, resultPath, result, error, accepted, retryFromStart, rejected, onDevice
+        case id, name, kind, baseURL, sourceScanFileName, optimise, optimisation, progress, resultPath, result, error, accepted, retryFromStart, rejected, onDevice
     }
 
     init(from decoder: Decoder) throws {
@@ -36,6 +38,8 @@ extension PrintJob {
         kind = try values.decode(String.self, forKey: .kind)
         baseURL = try values.decode(String.self, forKey: .baseURL)
         sourceScanFileName = try values.decodeIfPresent(String.self, forKey: .sourceScanFileName) ?? (kind == "scan" ? name + ".usdz" : nil)
+        optimise = try values.decodeIfPresent(Bool.self, forKey: .optimise) ?? false
+        optimisation = try values.decodeIfPresent(PrintOptimisation.self, forKey: .optimisation)
         progress = try values.decodeIfPresent(PrintProgress.self, forKey: .progress) ?? .uploading
         resultPath = try values.decodeIfPresent(String.self, forKey: .resultPath)
         if resultPath == nil, let legacy = try values.decodeIfPresent(URL.self, forKey: .result),
@@ -57,6 +61,8 @@ extension PrintJob {
         try values.encode(kind, forKey: .kind)
         try values.encode(baseURL, forKey: .baseURL)
         try values.encodeIfPresent(sourceScanFileName, forKey: .sourceScanFileName)
+        try values.encode(optimise, forKey: .optimise)
+        try values.encodeIfPresent(optimisation, forKey: .optimisation)
         try values.encode(progress, forKey: .progress)
         try values.encodeIfPresent(resultPath, forKey: .resultPath)
         try values.encodeIfPresent(error, forKey: .error)
@@ -119,15 +125,17 @@ final class PrintJobManager: ObservableObject {
         FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("PrintJobs", isDirectory: true)
     }
 
-    func start(input: PrintInput, name: String, kind: String) {
+    func start(input: PrintInput, name: String, kind: String, allowsOptimisation: Bool = false) {
         var sourceScanFileName: String?
         if case .mesh(let url) = input { sourceScanFileName = url.lastPathComponent }
-        start(payload: try? PrintService.payload(for: input), input: input, name: name, kind: kind, sourceScanFileName: sourceScanFileName)
+        let optimise = allowsOptimisation && defaults.bool(forKey: PrintService.optimiseKey)
+        start(payload: try? PrintService.payload(for: input, optimise: optimise), input: input, name: name, kind: kind, sourceScanFileName: sourceScanFileName, optimise: optimise)
     }
 
-    private func start(payload: PrintPayload?, input: PrintInput?, name: String, kind: String, sourceScanFileName: String?) {
+    private func start(payload: PrintPayload?, input: PrintInput?, name: String, kind: String, sourceScanFileName: String?, optimise: Bool) {
         var job = PrintJob(id: UUID().uuidString, name: name, kind: kind, baseURL: PrintService.configuredBaseURL)
         job.sourceScanFileName = sourceScanFileName
+        job.optimise = optimise
         jobs.append(job)
         inputs[job.id] = input
         if let payload {
@@ -202,7 +210,10 @@ final class PrintJobManager: ObservableObject {
     }
 
     func printedModel(for job: PrintJob) -> PrintedModel? {
-        job.result.map { PrintedModel(url: $0, sourceScanFileName: job.sourceScanFileName, kind: job.kind == "face" ? .face : .photo) }
+        job.result.map {
+            PrintedModel(url: $0, sourceScanFileName: job.sourceScanFileName, kind: job.kind == "face" ? .face : .photo,
+                         optimisationRequested: job.optimise, optimisation: job.optimisation)
+        }
     }
 
     var pendingPresentation: String? {
@@ -246,14 +257,14 @@ final class PrintJobManager: ObservableObject {
         }
         if job.retryFromStart || job.baseURL != PrintService.configuredBaseURL {
             let input = inputs[job.id]
-            guard let payload = input.flatMap({ try? PrintService.payload(for: $0) }) ?? payload(for: job.id) else {
+            guard let payload = payload(for: job.id) ?? input.flatMap({ try? PrintService.payload(for: $0, optimise: job.optimise) }) else {
                 if let index = jobs.firstIndex(where: { $0.id == job.id }) {
                     jobs[index].error = "Original print input is no longer available; print again."
                     persist()
                 }
                 return
             }
-            start(payload: payload, input: input, name: job.name, kind: job.kind, sourceScanFileName: job.sourceScanFileName)
+            start(payload: payload, input: input, name: job.name, kind: job.kind, sourceScanFileName: job.sourceScanFileName, optimise: job.optimise)
             dismiss(job)
             return
         }
@@ -337,7 +348,7 @@ final class PrintJobManager: ObservableObject {
                     let progress: @Sendable (PrintProgress) -> Void = { progress in
                         Task { @MainActor in self.update(job.id, progress: progress) }
                     }
-                    let url: URL
+                    let output: PrintOutput
                     let accepted = jobs.first(where: { $0.id == job.id })?.accepted ?? false
                     let payload = resend && !accepted ? payload(for: job.id) : nil
                     uploaded = payload != nil
@@ -351,8 +362,8 @@ final class PrintJobManager: ObservableObject {
                             persist()
                             return
                         }
-                        url = try await service.requestSTL(for: payload, name: job.id, in: Self.directory, jobID: job.id,
-                                                           uploads: state, onProgress: progress) { _ in
+                        output = try await service.requestSTL(for: payload, name: job.id, in: Self.directory, jobID: job.id,
+                                                              uploads: state, onProgress: progress) { _ in
                             Task { @MainActor in
                                 guard let index = self.jobs.firstIndex(where: { $0.id == job.id }) else { return }
                                 self.jobs[index].accepted = true
@@ -361,9 +372,9 @@ final class PrintJobManager: ObservableObject {
                             }
                         }
                     } else {
-                        url = try await service.reattach(id: job.id, name: job.id, in: Self.directory, onProgress: progress)
+                        output = try await service.reattach(id: job.id, name: job.id, in: Self.directory, onProgress: progress)
                     }
-                    complete(id: job.id, result: .success(url))
+                    complete(id: job.id, result: .success(output))
                     tasks[job.id] = nil
                     return
                 } catch {
@@ -416,7 +427,7 @@ final class PrintJobManager: ObservableObject {
         try? FileManager.default.removeItem(at: Self.directory.appendingPathComponent(id).appendingPathExtension("stl"))
     }
 
-    func complete(id: String, result: Result<URL, Error>, source: Transfer = .stream) {
+    func complete(id: String, result: Result<PrintOutput, Error>, source: Transfer = .stream) {
         guard let index = jobs.firstIndex(where: { $0.id == id }), !jobs[index].isFinished else {
             if case .success = result { removeTransferFile(id) }
             return
@@ -437,14 +448,15 @@ final class PrintJobManager: ObservableObject {
             }
         }
         switch result {
-        case .success(let url):
+        case .success(let output):
             do {
                 let folder = Self.directory.appendingPathComponent(id, isDirectory: true)
                 try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
                 let fileName = jobs[index].name.replacingOccurrences(of: "/", with: "-")
                 let target = folder.appendingPathComponent(fileName).appendingPathExtension("stl")
-                try Data(contentsOf: url).write(to: target, options: .atomic)
+                try Data(contentsOf: output.url).write(to: target, options: .atomic)
                 jobs[index].result = target
+                jobs[index].optimisation = output.optimisation
                 removeTransferFile(id)
             } catch { jobs[index].error = error.localizedDescription }
         case .failure(let error):
@@ -521,7 +533,7 @@ final class PrintBackgroundDownload: NSObject, URLSessionDownloadDelegate, @unch
         session.getAllTasks { tasks in tasks.filter { $0.taskDescription == id }.forEach { $0.cancel() } }
     }
 
-    static func saveResponse(_ response: URLResponse?, file: URL, id: String) throws -> URL {
+    static func saveResponse(_ response: URLResponse?, file: URL, id: String) throws -> PrintOutput {
         guard let http = response as? HTTPURLResponse else { throw PrintError.unexpectedResponse("no HTTP response") }
         if http.statusCode == 404 { throw PrintError.server(status: 404, message: PrintError.lostContact.localizedDescription) }
         guard (200..<300).contains(http.statusCode) else {
@@ -536,7 +548,7 @@ final class PrintBackgroundDownload: NSObject, URLSessionDownloadDelegate, @unch
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let url = directory.appendingPathComponent(id).appendingPathExtension("stl")
         try data.write(to: url, options: .atomic)
-        return url
+        return PrintOutput(url: url, optimisation: PrintReport.optimisation(in: http))
     }
 
     func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didFinishDownloadingTo location: URL) {

@@ -45,11 +45,17 @@ Printing runs as an app-wide job: you can close the photo screen, return Home, o
 Room/Object scan while it works. A compact banner follows you across screens. Tap
 **STL ready — Share** when finished to send the file to a slicer or *Save to Files*.
 
-Set the server and token in **Settings** (gear icon on the home screen). The default server is `https://slesvci--3d-print-web.us-east.modal.run`, set by `PRINT_BASE_URL` in `project.yml`; the token (`PRINT_API_TOKEN`) is kept in the Keychain. The app calls:
+Set the server and token in **Settings** (gear icon on the home screen). The default server is `https://slesvci--3d-print-web.us-east.modal.run`, set by `PRINT_BASE_URL` in `project.yml`; the token (`PRINT_API_TOKEN`) is kept in the Keychain.
+
+**Settings > Print Options > Save print material** is off by default. Turn it on with a compatible server to request topology optimisation for new Object Scan and Photo Print jobs. The STL result shows the reported reduction in model volume or why the server skipped optimisation. A volume reduction does not validate a part for use under load.
+
+The app calls:
 
 ```
 POST {server}/print   multipart/form-data, Authorization: Bearer <token>
   mesh=<scan .usdz, metres>          (or photo=<jpeg> + height_mm=<number>)
+  optimise=true only when requested; adds an optimise stage and report.optimise
+    {volume_saved_pct, volume_cm3_before, volume_cm3_after} or {skipped}
   every photo also sends camera_transform=[16 floats, column-major camera-to-world, +Y up,
     camera x/y = the uploaded photo's pixel axes] and image_orientation (1 when already upright)
   with LiDAR depth it also sends, from the same frame (photo left in sensor orientation):
@@ -88,6 +94,7 @@ failure/Retry UI against the same stub instance. The stub also hands out signed 
 URLs on itself: `/expire` makes each job's first URL per file already expired, `/drop` makes the
 first submit report a file missing (409), `/legacy` answers 405 to `/print/uploads`, `/deny` refuses every PUT with 403, `/slow` takes 4 s per PUT; modes combine,
 e.g. `http://127.0.0.1:8765/expire-drop`. No second stub is required by the UI tests.
+The stub simulates material savings without changing the cube; add `/skipopt` to simulate a skipped optimisation.
 It keeps jobs in memory, supports replay/result routes and idempotent submissions, and
 continues processing after a client disconnects. Restarting it clears its jobs.
 

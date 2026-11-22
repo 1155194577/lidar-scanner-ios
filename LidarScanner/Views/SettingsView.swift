@@ -4,6 +4,7 @@ struct SettingsView: View {
     @Environment(\.dismiss) private var dismiss
     @AppStorage(PrintService.baseURLKey) private var printBaseURL = PrintService.defaultBaseURL
     @AppStorage(FaceScanModel.turnHeadKey) private var faceTurnHead = false
+    @AppStorage(PrintService.optimiseKey) private var optimise = false
     @AppStorage(OnDeviceTripoSR.enabledKey) private var onDevicePrint = false
     @ObservedObject private var onDeviceModel = OnDeviceModelStore.shared
     @State private var printToken = KeychainStore.read(PrintService.tokenKey) ?? ""
@@ -30,6 +31,14 @@ struct SettingsView: View {
                     Text("Print Server")
                 } footer: {
                     Text("Print uploads the scan to \(endpointPreview). You can save the returned STL in My Scans or share it with a slicer app. The token is sent as a Bearer token and kept in the Keychain.")
+                }
+                Section {
+                    Toggle("Save print material", isOn: $optimise)
+                        .accessibilityIdentifier("printOptimiseToggle")
+                } header: {
+                    Text("Print Options")
+                } footer: {
+                    Text("Ask a compatible print server to remove material from object scans and Photo Prints. Check strength before using an optimised part under load.")
                 }
                 Section {
                     Toggle("Build photo prints on this iPhone", isOn: $onDevicePrint)
