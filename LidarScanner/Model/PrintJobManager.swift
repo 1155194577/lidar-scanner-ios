@@ -270,7 +270,8 @@ final class PrintJobManager: ObservableObject {
                 }
                 return
             }
-            start(payload: payload, input: input, name: job.name, kind: job.kind, sourceScanFileName: job.sourceScanFileName, optimise: job.optimise)
+            let retakeContext = retakeContexts.removeValue(forKey: job.id)
+            start(payload: payload, input: input, name: job.name, kind: job.kind, sourceScanFileName: job.sourceScanFileName, optimise: job.optimise, retakeContext: retakeContext)
             dismiss(job)
             return
         }

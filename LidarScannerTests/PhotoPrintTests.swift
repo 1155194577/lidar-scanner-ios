@@ -27,6 +27,41 @@ final class PhotoPrintTests: XCTestCase {
     }
 
     @MainActor
+    func testRetryTransfersRetakeContextToReplacementJob() throws {
+        let model = PhotoPrintModel(fake: true)
+        let primary = PhotoPrintModel.Shot(photo: Data("primary".utf8),
+            pose: PhotoPrintModel.samplePose(pitchDegrees: 5), depth: PhotoPrintModel.sampleDepth,
+            checkPhoto: Data(), checkPose: PhotoPrintModel.samplePose(pitchDegrees: 5))
+        let context = PhotoRetakeContext(model: model, primary: primary, heightMM: 120)
+        let suite = "PhotoRetryTests-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let manager = PrintJobManager(defaults: defaults, notifications: false, makeService: { _, _ in
+            throw CancellationError()
+        })
+        manager.start(input: .photo(primary.photo, heightMM: 120, pose: primary.pose, depth: primary.depth),
+                      name: "Retry photo", kind: "photo", retakeContext: context)
+        let original = try XCTUnwrap(manager.jobs.first)
+        manager.complete(id: original.id, result: .failure(PrintError.jobFailed("Reconstruction failed")))
+        model.retainsSession = true
+        manager.retry(try XCTUnwrap(manager.jobs.first))
+        let replacement = try XCTUnwrap(manager.jobs.first)
+        defer { manager.dismiss(replacement) }
+        XCTAssertEqual(manager.jobs.count, 1)
+        XCTAssertNotEqual(replacement.id, original.id)
+        XCTAssertTrue(model.retainsSession, "Dismissing the old job must not release the transferred session")
+        let file = PrintJobManager.directory.appendingPathComponent("retry-\(UUID().uuidString).stl")
+        defer { try? FileManager.default.removeItem(at: file) }
+        try Data("stl".utf8).write(to: file)
+        let check = PrintModelCheck(ok: false, sides: [], retakeSide: "back", suggestScan: false)
+        manager.complete(id: replacement.id, result: .success(PrintOutput(url: file, modelCheck: check)))
+        let result = try XCTUnwrap(manager.printedModel(for: try XCTUnwrap(manager.jobs.first)))
+        XCTAssertTrue(result.retakeContext === context)
+        XCTAssertEqual(result.modelCheck, check)
+        XCTAssertFalse(context.used)
+    }
+
+    @MainActor
     func testRetakeUsesOriginalPrimaryAndOnlyAllowsOneExtraShot() throws {
         let model = PhotoPrintModel(fake: true)
         let primary = PhotoPrintModel.Shot(photo: Data("original-photo".utf8),
