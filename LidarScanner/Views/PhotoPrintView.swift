@@ -129,6 +129,7 @@ struct PrintResultView: View {
     @EnvironmentObject private var store: ScanStore
     @Environment(\.dismiss) private var dismiss
     @State private var isSharing = false
+    @State private var isSharingGCode = false
     @State private var isSaved = false
     @State private var saveError: String?
     @State private var showsRetake = false
@@ -196,6 +197,14 @@ struct PrintResultView: View {
                     } label: {
                         Label("Share STL", systemImage: "square.and.arrow.up")
                     }
+                    if FileManager.default.fileExists(atPath: model.url.gcodeSidecar.path) {
+                        Button {
+                            isSharingGCode = true
+                        } label: {
+                            Label("Share G-code (MakerSpace K1C)", systemImage: "printer")
+                        }
+                        .accessibilityIdentifier("shareGCode")
+                    }
                 }
             }
             .navigationTitle("STL Ready")
@@ -218,6 +227,11 @@ struct PrintResultView: View {
         .fullScreenCover(isPresented: $showsObjectScan) { ObjectScanEntryView() }
         .sheet(isPresented: $isSharing) {
             ActivityView(items: [model.url]) { isSharing = false }
+                .presentationDetents([.medium, .large])
+                .ignoresSafeArea()
+        }
+        .sheet(isPresented: $isSharingGCode) {
+            ActivityView(items: [model.url.gcodeSidecar]) { isSharingGCode = false }
                 .presentationDetents([.medium, .large])
                 .ignoresSafeArea()
         }

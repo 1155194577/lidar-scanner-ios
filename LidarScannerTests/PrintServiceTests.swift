@@ -1219,6 +1219,29 @@ final class PrintServiceTests: XCTestCase {
         XCTAssertNil(STLMesh(data: Data("solid empty\nendsolid empty".utf8)))
     }
 
+    func testSlicedPrintSavesTheServersGCodeBesideTheSTL() async throws {
+        var calls: [String] = []
+        StubProtocol.handler = { request in
+            let path = request.url!.path
+            calls.append("\(request.httpMethod!) \(path)")
+            if path == "/print/job-1/gcode" {
+                XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer abc")
+                return (200, "text/x-gcode", Data("START_PRINT".utf8))
+            }
+            if path == "/print/uploads" {
+                let files = (try? JSONSerialization.jsonObject(with: Self.body(of: request)) as? [String: Any])?["files"] as? [String: Any] ?? [:]
+                return (200, "application/json", Self.uploadPlan(for: files.keys.sorted()))
+            }
+            return (200, "application/x-ndjson", Data("{\"type\":\"accepted\",\"job_id\":\"job-1\"}\n{\"type\":\"done\",\"stl_base64\":\"c3Rs\",\"report\":{\"gcode\":{\"filename\":\"x.gcode\",\"size_bytes\":11}}}\n".utf8))
+        }
+        let url = try await service(token: "abc", signedUploads: true, uploader: FakeUploader())
+            .requestSTL(for: .photo(Data("jpeg".utf8), heightMM: 10, depth: Self.depth), name: "sliced-\(UUID().uuidString)",
+                        in: FileManager.default.temporaryDirectory, jobID: "job-1", uploads: PrintUploadState())
+        defer { try? FileManager.default.removeItem(at: url); try? FileManager.default.removeItem(at: url.gcodeSidecar) }
+        XCTAssertEqual(try String(contentsOf: url.gcodeSidecar, encoding: .utf8), "START_PRINT")
+        XCTAssertEqual(calls.last, "GET /print/job-1/gcode")
+    }
+
     func testSignedUploadPutsEachFileWithReturnedHeadersThenSubmits() async throws {
         let uploader = FakeUploader()
         var calls: [String] = []

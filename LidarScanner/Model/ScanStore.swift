@@ -28,6 +28,10 @@ struct ScanFile: Identifiable, Hashable {
 
     var id: URL { url }
     var name: String { url.deletingPathExtension().lastPathComponent }
+    /// The server's G-code for the CUHK MakerSpace Creality K1C, saved beside the STL.
+    var printedGCodeURL: URL? {
+        printedSTLURL.map(\.gcodeSidecar).flatMap { FileManager.default.fileExists(atPath: $0.path) ? $0 : nil }
+    }
 }
 
 /// Scans and saved print files live in Documents/Scans and also show up in Files.
@@ -82,8 +86,9 @@ final class ScanStore: ObservableObject {
               fileManager.fileExists(atPath: scan.url.path) else {
             throw CocoaError(.fileNoSuchFile)
         }
-        try Data(contentsOf: source, options: .mappedIfSafe)
-            .write(to: Self.sidecarURL(for: scan.url), options: .atomic)
+        let stl = Self.sidecarURL(for: scan.url)
+        try Data(contentsOf: source, options: .mappedIfSafe).write(to: stl, options: .atomic)
+        copyGCode(from: source, to: stl)
         reload()
     }
 
@@ -93,7 +98,15 @@ final class ScanStore: ObservableObject {
         try fileManager.createDirectory(at: folder, withIntermediateDirectories: true)
         let destination = uniqueURL(in: folder, name: source.deletingPathExtension().lastPathComponent, extension: "stl")
         try Data(contentsOf: source, options: .mappedIfSafe).write(to: destination, options: .atomic)
+        copyGCode(from: source, to: destination)
         reload()
+    }
+
+    private func copyGCode(from sourceSTL: URL, to stl: URL) {
+        try? fileManager.removeItem(at: stl.gcodeSidecar)
+        if fileManager.fileExists(atPath: sourceSTL.gcodeSidecar.path) {
+            try? fileManager.copyItem(at: sourceSTL.gcodeSidecar, to: stl.gcodeSidecar)
+        }
     }
 
     private func uniqueURL(in directory: URL, name: String, extension fileExtension: String) -> URL {
@@ -125,6 +138,7 @@ final class ScanStore: ObservableObject {
                 try fileManager.removeItem(at: stl)
             }
         }
+        if let gcode = scan.printedGCodeURL { try? fileManager.removeItem(at: gcode) }
         try fileManager.removeItem(at: scan.url)
     }
 

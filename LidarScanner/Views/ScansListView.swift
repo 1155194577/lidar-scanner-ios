@@ -176,6 +176,12 @@ private struct ScanDetailView: View {
                     ShareLink(item: stl) {
                         Label("Share STL", systemImage: "square.and.arrow.up")
                     }
+                    if let gcode = scan.printedGCodeURL {
+                        ShareLink(item: gcode) {
+                            Label("Share G-code (MakerSpace K1C)", systemImage: "printer")
+                        }
+                        .accessibilityIdentifier("shareGCode")
+                    }
                 }
             }
         }
