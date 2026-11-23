@@ -56,6 +56,82 @@ final class PrintServiceTests: XCTestCase {
         XCTAssertTrue(body.contains("name=\"photo\"; filename=\"photo.jpg\"\r\nContent-Type: image/jpeg\r\n\r\njpeg\r\n"))
         XCTAssertTrue(body.contains("name=\"height_mm\"\r\n\r\n123.4\r\n"))
         XCTAssertFalse(body.contains("name=\"mesh\""))
+        XCTAssertTrue(body.contains("name=\"model_check\"\r\n\r\ntrue\r\n"))
+    }
+
+    @MainActor
+    func testModelCheckIsOnlySentForServerObjectPhotosAndRetakeFieldsAreEncoded() throws {
+        let service = try PrintService(baseURL: "http://localhost:8765")
+        let mesh = directory.appendingPathComponent("box.obj")
+        try Data("mesh".utf8).write(to: mesh)
+        for input in [PrintInput.mesh(mesh), .face(FaceScanModel.sampleCapture(heightMM: 100))] {
+            let body = String(decoding: try XCTUnwrap(service.makeRequest(for: input).httpBody), as: UTF8.self)
+            XCTAssertFalse(body.contains("name=\"model_check\""))
+        }
+        let pose = PhotoPrintModel.samplePose(pitchDegrees: 5)
+        let depth = PhotoPrintModel.sampleDepth
+        var extra = PhotoExtraView(photo: Data("extra-photo".utf8), pose: pose, depth: depth, side: "back")
+        extra.depthIntrinsics = depth.intrinsics
+        extra.depthExtrinsics = pose.cameraTransform
+        let input = PrintInput.photo(Data("primary-photo".utf8), heightMM: 120, pose: pose, depth: depth, views: [extra])
+        let request = try service.makeRequest(for: input)
+        let data = try XCTUnwrap(request.httpBody)
+        let body = String(decoding: data, as: UTF8.self)
+        for field in ["model_check", "view_count", "view_1_photo", "view_1_depth", "view_1_depth_width",
+                      "view_1_depth_height", "view_1_intrinsics", "view_1_camera_transform",
+                      "view_1_image_orientation", "view_1_depth_intrinsics", "view_1_depth_extrinsics", "view_1_side"] {
+            XCTAssertTrue(body.contains("name=\"\(field)\""), field)
+        }
+        XCTAssertTrue(body.contains("name=\"view_count\"\r\n\r\n2\r\n"))
+        XCTAssertTrue(body.contains("name=\"view_1_side\"\r\n\r\nback\r\n"))
+        XCTAssertTrue(body.contains("primary-photo"))
+        XCTAssertTrue(body.contains("extra-photo"))
+        XCTAssertNotNil(data.range(of: depth.depthData))
+        XCTAssertThrowsError(try service.makeRequest(for: .photo(Data(), heightMM: 120, views: [extra])))
+    }
+
+    private var modelCheckReports: [(String, Bool?, String?, Bool?)] {
+        [
+            (#"{"ok":true,"sides":[{"side":"front","ok":true,"message":"Looks good."}],"retake_side":null,"suggest_scan":false}"#, true, nil, false),
+            (#"{"ok":false,"sides":[{"side":"back","ok":false,"message":"Take another photo of the back."}],"retake_side":"back","suggest_scan":false}"#, false, "back", false),
+            (#"{"ok":false,"sides":[{"side":"view_1","ok":false,"message":"Try a walk-around Object Scan."}],"retake_side":null,"suggest_scan":true}"#, false, nil, true),
+            (#"{"skipped":"Vision unavailable"}"#, nil, nil, nil)
+        ]
+    }
+
+    func testModelCheckHeaderAndBackgroundReportDecoding() throws {
+        for (json, ok, side, scan) in modelCheckReports {
+            let response = try XCTUnwrap(HTTPURLResponse(url: URL(string: "http://print.test/result")!, statusCode: 200,
+                httpVersion: nil, headerFields: ["Content-Type": "model/stl", "X-Print-Report": "{\"model_check\":\(json)}"]))
+            let check = PrintReport.report(in: response)?.modelCheck
+            XCTAssertEqual(check?.ok, ok)
+            XCTAssertEqual(check?.retakeSide, side)
+            XCTAssertEqual(check?.suggestScan, scan)
+            let file = directory.appendingPathComponent("download")
+            try Data("stl".utf8).write(to: file)
+            let output = try PrintBackgroundDownload.saveResponse(response, file: file, id: UUID().uuidString)
+            XCTAssertEqual(output.modelCheck, check)
+            try? FileManager.default.removeItem(at: output.url)
+        }
+    }
+
+    func testModelCheckNDJSONDecodingAndReviewStage() async throws {
+        for (json, ok, side, scan) in modelCheckReports {
+            let lines = "{\"type\":\"progress\",\"stage\":\"review\"}\n" +
+                "{\"type\":\"done\",\"stl_base64\":\"c3Rs\",\"report\":{\"model_check\":\(json)}}\n"
+            StubProtocol.handler = { _ in (200, "application/x-ndjson", Data(lines.utf8)) }
+            let reviewed = expectation(description: "review progress")
+            let output = try await service().reattach(id: "job", name: "checked", in: directory) { progress in
+                if progress.stage == "review" {
+                    XCTAssertEqual(progress.message, "Checking the reconstructed shape")
+                    reviewed.fulfill()
+                }
+            }
+            XCTAssertEqual(output.modelCheck?.ok, ok)
+            XCTAssertEqual(output.modelCheck?.retakeSide, side)
+            XCTAssertEqual(output.modelCheck?.suggestScan, scan)
+            await fulfillment(of: [reviewed], timeout: 1)
+        }
     }
 
     func testOptimisationIsOptInAndOnlySentOnFinalSubmit() throws {

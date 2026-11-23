@@ -10,6 +10,7 @@ struct PrintJob: Identifiable, Codable {
     var sourceScanFileName: String?
     var optimise = false
     var optimisation: PrintOptimisation?
+    var modelCheck: PrintModelCheck?
     var progress = PrintProgress.uploading
     var resultPath: String?
     var result: URL? {
@@ -28,7 +29,7 @@ struct PrintJob: Identifiable, Codable {
 
 extension PrintJob {
     private enum CodingKeys: String, CodingKey {
-        case id, name, kind, baseURL, sourceScanFileName, optimise, optimisation, progress, resultPath, result, error, accepted, retryFromStart, rejected, onDevice
+        case id, name, kind, baseURL, sourceScanFileName, optimise, optimisation, modelCheck, progress, resultPath, result, error, accepted, retryFromStart, rejected, onDevice
     }
 
     init(from decoder: Decoder) throws {
@@ -40,6 +41,7 @@ extension PrintJob {
         sourceScanFileName = try values.decodeIfPresent(String.self, forKey: .sourceScanFileName) ?? (kind == "scan" ? name + ".usdz" : nil)
         optimise = try values.decodeIfPresent(Bool.self, forKey: .optimise) ?? false
         optimisation = try values.decodeIfPresent(PrintOptimisation.self, forKey: .optimisation)
+        modelCheck = try values.decodeIfPresent(PrintModelCheck.self, forKey: .modelCheck)
         progress = try values.decodeIfPresent(PrintProgress.self, forKey: .progress) ?? .uploading
         resultPath = try values.decodeIfPresent(String.self, forKey: .resultPath)
         if resultPath == nil, let legacy = try values.decodeIfPresent(URL.self, forKey: .result),
@@ -63,6 +65,7 @@ extension PrintJob {
         try values.encodeIfPresent(sourceScanFileName, forKey: .sourceScanFileName)
         try values.encode(optimise, forKey: .optimise)
         try values.encodeIfPresent(optimisation, forKey: .optimisation)
+        try values.encodeIfPresent(modelCheck, forKey: .modelCheck)
         try values.encode(progress, forKey: .progress)
         try values.encodeIfPresent(resultPath, forKey: .resultPath)
         try values.encodeIfPresent(error, forKey: .error)
@@ -82,6 +85,7 @@ final class PrintJobManager: ObservableObject {
     private var shownUploads = Set<String>()
     private var shownResults = Set<String>()
     private var inputs: [String: PrintInput] = [:]
+    private var retakeContexts: [String: PhotoRetakeContext] = [:]
     private var onDeviceInputs: [String: (photo: Data, heightMM: Double)] = [:]
     private var payloads: [String: PrintPayload] = [:]
     private var tasks: [String: Task<Void, Never>] = [:]
@@ -125,19 +129,20 @@ final class PrintJobManager: ObservableObject {
         FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("PrintJobs", isDirectory: true)
     }
 
-    func start(input: PrintInput, name: String, kind: String, allowsOptimisation: Bool = false) {
+    func start(input: PrintInput, name: String, kind: String, allowsOptimisation: Bool = false, retakeContext: PhotoRetakeContext? = nil) {
         var sourceScanFileName: String?
         if case .mesh(let url) = input { sourceScanFileName = url.lastPathComponent }
         let optimise = allowsOptimisation && defaults.bool(forKey: PrintService.optimiseKey)
-        start(payload: try? PrintService.payload(for: input, optimise: optimise), input: input, name: name, kind: kind, sourceScanFileName: sourceScanFileName, optimise: optimise)
+        start(payload: try? PrintService.payload(for: input, optimise: optimise), input: input, name: name, kind: kind, sourceScanFileName: sourceScanFileName, optimise: optimise, retakeContext: retakeContext)
     }
 
-    private func start(payload: PrintPayload?, input: PrintInput?, name: String, kind: String, sourceScanFileName: String?, optimise: Bool) {
+    private func start(payload: PrintPayload?, input: PrintInput?, name: String, kind: String, sourceScanFileName: String?, optimise: Bool, retakeContext: PhotoRetakeContext? = nil) {
         var job = PrintJob(id: UUID().uuidString, name: name, kind: kind, baseURL: PrintService.configuredBaseURL)
         job.sourceScanFileName = sourceScanFileName
         job.optimise = optimise
         jobs.append(job)
         inputs[job.id] = input
+        retakeContexts[job.id] = retakeContext
         if let payload {
             payloads[job.id] = payload
             try? payload.save(to: Self.payloadFolder(job.id))
@@ -212,7 +217,8 @@ final class PrintJobManager: ObservableObject {
     func printedModel(for job: PrintJob) -> PrintedModel? {
         job.result.map {
             PrintedModel(url: $0, sourceScanFileName: job.sourceScanFileName, kind: job.kind == "face" ? .face : .photo,
-                         optimisationRequested: job.optimise, optimisation: job.optimisation)
+                         optimisationRequested: job.optimise, optimisation: job.optimisation,
+                         modelCheck: job.modelCheck, retakeContext: retakeContexts[job.id])
         }
     }
 
@@ -281,6 +287,7 @@ final class PrintJobManager: ObservableObject {
         tasks.removeValue(forKey: job.id)?.cancel()
         jobs.removeAll { $0.id == job.id }
         inputs.removeValue(forKey: job.id)
+        retakeContexts.removeValue(forKey: job.id)?.releaseSession()
         onDeviceInputs.removeValue(forKey: job.id)
         payloads.removeValue(forKey: job.id)
         PrintUploadState.discard(job.id)
@@ -457,6 +464,10 @@ final class PrintJobManager: ObservableObject {
                 try Data(contentsOf: output.url).write(to: target, options: .atomic)
                 jobs[index].result = target
                 jobs[index].optimisation = output.optimisation
+                jobs[index].modelCheck = output.modelCheck
+                if output.modelCheck?.retakeSide == nil {
+                    retakeContexts.removeValue(forKey: id)?.releaseSession()
+                }
                 removeTransferFile(id)
             } catch { jobs[index].error = error.localizedDescription }
         case .failure(let error):
@@ -548,7 +559,8 @@ final class PrintBackgroundDownload: NSObject, URLSessionDownloadDelegate, @unch
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let url = directory.appendingPathComponent(id).appendingPathExtension("stl")
         try data.write(to: url, options: .atomic)
-        return PrintOutput(url: url, optimisation: PrintReport.optimisation(in: http))
+        let report = PrintReport.report(in: http)
+        return PrintOutput(url: url, optimisation: report?.optimise, modelCheck: report?.modelCheck)
     }
 
     func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didFinishDownloadingTo location: URL) {

@@ -419,6 +419,36 @@ final class LidarScannerUITests: XCTestCase {
         XCTAssertTrue(app.otherElements["ActivityListView"].waitForExistence(timeout: 5))
     }
 
+    func testBadModelSideCanBeRetakenThenSuggestsWalkAroundScan() throws {
+        try requirePrintStub()
+        let app = launch(["-UITestFakePhotoCapture", "-UITestFakePitch", "5", "-printBaseURL", Self.stubHost + "/legacy-modelbad", "-printAPIToken", Self.stubToken])
+        app.buttons["photoPrintButton"].tap()
+        app.buttons["takePhotoAndPrintButton"].tap()
+        let allow = XCUIApplication(bundleIdentifier: "com.apple.springboard").alerts.buttons["Allow"]
+        if allow.waitForExistence(timeout: 3) { allow.tap() }
+        openPrintResult(in: app, timeout: 30)
+        let snap = app.buttons["snapModelSide"]
+        XCTAssertTrue(snap.waitForExistence(timeout: 30))
+        if !snap.isHittable { app.swipeUp() }
+        snap.tap()
+        let capture = app.buttons["captureModelSide"]
+        XCTAssertTrue(capture.waitForExistence(timeout: 5))
+        capture.tap()
+        let retakenResult = app.buttons["printResultButton"].element(boundBy: 1)
+        XCTAssertTrue(retakenResult.waitForExistence(timeout: 30))
+        retakenResult.tap()
+        let scan = app.buttons["tryWalkAroundScan"]
+        XCTAssertTrue(scan.waitForExistence(timeout: 30))
+        let received = try lastStubRequest()
+        let fields = received["fields"] as? [String] ?? []
+        XCTAssertTrue(fields.contains("view_1_photo"))
+        XCTAssertTrue(fields.contains("view_1_depth"))
+        XCTAssertTrue(fields.contains("view_1_camera_transform"))
+        if !scan.isHittable { app.swipeUp() }
+        scan.tap()
+        XCTAssertTrue(app.buttons["guideCloseButton"].waitForExistence(timeout: 5))
+    }
+
     func testPhotoPrintSendsPhotoAndHeightAndOpensSTL() throws {
         try requirePrintStub()
         let app = launch(["-UITestFakePhotoCapture", "-UITestFakePitch", "5", "-printBaseURL", Self.stubURL, "-printAPIToken", Self.stubToken])
@@ -436,7 +466,7 @@ final class LidarScannerUITests: XCTestCase {
         XCTAssertFalse(app.alerts["Couldn't print photo"].exists)
 
         let received = try lastStubRequest()
-        XCTAssertEqual(received["fields"] as? [String], ["camera_transform", "depth", "depth_confidence", "depth_height", "depth_width", "height_mm", "image_orientation", "intrinsics", "job_id", "object_points", "photo"])
+        XCTAssertEqual(received["fields"] as? [String], ["camera_transform", "depth", "depth_confidence", "depth_height", "depth_width", "height_mm", "image_orientation", "intrinsics", "job_id", "model_check", "object_points", "photo"])
         XCTAssertEqual(received["depth_width"] as? Int, 48)
         XCTAssertEqual(received["depth_height"] as? Int, 64)
         XCTAssertEqual((received["object_points"] as? [[Double]])?.count, 2)
@@ -504,7 +534,7 @@ final class LidarScannerUITests: XCTestCase {
         try printPhoto(baseURL: Self.stubHost + "/legacy")
         let received = try lastStubRequest()
         XCTAssertNil(received["uploaded"])
-        XCTAssertEqual(received["fields"] as? [String], ["camera_transform", "depth", "depth_confidence", "depth_height", "depth_width", "height_mm", "image_orientation", "intrinsics", "job_id", "object_points", "photo"])
+        XCTAssertEqual(received["fields"] as? [String], ["camera_transform", "depth", "depth_confidence", "depth_height", "depth_width", "height_mm", "image_orientation", "intrinsics", "job_id", "model_check", "object_points", "photo"])
     }
 
     func testPhotoPrintFallsBackToMultipartWhenStorageDeniesEveryUpload() throws {
