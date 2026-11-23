@@ -477,6 +477,9 @@ final class PrintJobManager: ObservableObject {
             if case PrintError.invalidBaseURL = error { jobs[index].retryFromStart = true }
             if case PrintError.server(422, _) = error { jobs[index].retryFromStart = true }
         }
+        if jobs[index].error != nil {
+            retakeContexts[id]?.releaseSession()
+        }
         persist()
         tasks.removeValue(forKey: id)?.cancel()
         PrintBackgroundDownload.shared.cancel(id: id)

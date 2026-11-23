@@ -62,6 +62,43 @@ final class PhotoPrintTests: XCTestCase {
     }
 
     @MainActor
+    func testFailedPrintReleasesTrackingRetentionButCanRetakeAfterRetry() throws {
+        let model = PhotoPrintModel(fake: true)
+        let primary = PhotoPrintModel.Shot(photo: Data("primary".utf8),
+            pose: PhotoPrintModel.samplePose(pitchDegrees: 5), depth: PhotoPrintModel.sampleDepth,
+            checkPhoto: Data(), checkPose: PhotoPrintModel.samplePose(pitchDegrees: 5))
+        let context = PhotoRetakeContext(model: model, primary: primary, heightMM: 120)
+        let suite = "PhotoFailureTests-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let manager = PrintJobManager(defaults: defaults, notifications: false, makeService: { _, _ in
+            throw CancellationError()
+        })
+        manager.start(input: .photo(primary.photo, heightMM: 120, pose: primary.pose, depth: primary.depth),
+                      name: "Failed photo", kind: "photo", retakeContext: context)
+        model.retainsSession = true
+        let original = try XCTUnwrap(manager.jobs.first)
+        manager.complete(id: original.id, result: .failure(CancellationError()))
+        XCTAssertTrue(model.retainsSession, "A cancelled transfer is not a terminal job failure")
+        manager.complete(id: original.id, result: .failure(PrintError.jobFailed("Reconstruction failed")))
+        XCTAssertFalse(model.retainsSession)
+        manager.retry(try XCTUnwrap(manager.jobs.first))
+        let replacement = try XCTUnwrap(manager.jobs.first)
+        let file = PrintJobManager.directory.appendingPathComponent("recovered-\(UUID().uuidString).stl")
+        defer {
+            for job in manager.jobs { manager.dismiss(job) }
+            try? FileManager.default.removeItem(at: file)
+        }
+        try Data("stl".utf8).write(to: file)
+        let check = PrintModelCheck(ok: false, sides: [], retakeSide: "back", suggestScan: false)
+        manager.complete(id: replacement.id, result: .success(PrintOutput(url: file, modelCheck: check)))
+        let result = try XCTUnwrap(manager.printedModel(for: try XCTUnwrap(manager.jobs.first)))
+        XCTAssertTrue(result.retakeContext === context)
+        XCTAssertFalse(model.retainsSession, "Retry must not restart offscreen tracking")
+        XCTAssertTrue(context.submit(side: "back", using: manager))
+    }
+
+    @MainActor
     func testRetakeUsesOriginalPrimaryAndOnlyAllowsOneExtraShot() throws {
         let model = PhotoPrintModel(fake: true)
         let primary = PhotoPrintModel.Shot(photo: Data("original-photo".utf8),
