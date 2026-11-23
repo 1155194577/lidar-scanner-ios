@@ -16,6 +16,8 @@ struct PhotoPrintView: View {
                         .resizable()
                         .scaledToFill()
                         .ignoresSafeArea()
+                } else if model.isRetaking {
+                    Color.black.ignoresSafeArea()
                 } else {
                     MeasureARView(model: model).ignoresSafeArea()
                 }
@@ -103,6 +105,8 @@ struct PrintedModel: Identifiable {
     var kind: ScanKind = .photo
     var optimisationRequested = false
     var optimisation: PrintOptimisation?
+    var modelCheck: PrintModelCheck? = nil
+    var retakeContext: PhotoRetakeContext? = nil
     var id: URL { url }
 
     @MainActor
@@ -128,6 +132,9 @@ struct PrintResultView: View {
     @State private var isSharingGCode = false
     @State private var isSaved = false
     @State private var saveError: String?
+    @State private var showsRetake = false
+    @State private var retakeSubmitted = false
+    @State private var showsObjectScan = false
     let model: PrintedModel
 
     private var optimisationSummary: String {
@@ -152,6 +159,28 @@ struct PrintResultView: View {
                     Section("Material Savings") {
                         Text(optimisationSummary)
                             .accessibilityIdentifier("printOptimisationSummary")
+                    }
+                }
+                if let check = model.modelCheck, !check.ok {
+                    Section("Shape check") {
+                        ForEach(check.sides.filter { !$0.ok }, id: \.side) { side in
+                            Text(side.message)
+                        }
+                        if let side = check.retakeSide, let context = model.retakeContext, !context.used {
+                            Text("Walk around to the \(side) and shoot it level. Keep the object still.")
+                            Button("Snap the \(side)") {
+                                context.model.isRetaking = true
+                                showsRetake = true
+                            }
+                            .accessibilityIdentifier("snapModelSide")
+                        } else if check.retakeSide != nil && !check.suggestScan {
+                            Text("The original camera session is no longer available. Try a walk-around Object Scan instead.")
+                        }
+                        if check.suggestScan || (check.retakeSide != nil && (model.retakeContext == nil || model.retakeContext?.used == true)) {
+                            Button("Try a walk-around scan") { showsObjectScan = true }
+                                .accessibilityIdentifier("tryWalkAroundScan")
+                        }
+                        Text("You can still save or share this print anyway.")
                     }
                 }
                 Section {
@@ -187,6 +216,15 @@ struct PrintResultView: View {
             }
         }
         .presentationDetents([.large])
+        .fullScreenCover(isPresented: $showsRetake, onDismiss: {
+            model.retakeContext?.model.isRetaking = false
+            if retakeSubmitted { dismiss() }
+        }) {
+            if let context = model.retakeContext, let side = model.modelCheck?.retakeSide {
+                PhotoRetakeView(context: context, side: side) { retakeSubmitted = true }
+            }
+        }
+        .fullScreenCover(isPresented: $showsObjectScan) { ObjectScanEntryView() }
         .sheet(isPresented: $isSharing) {
             ActivityView(items: [model.url]) { isSharing = false }
                 .presentationDetents([.medium, .large])
@@ -215,6 +253,97 @@ struct PrintResultView: View {
 }
 
 @MainActor
+final class PhotoRetakeContext {
+    let model: PhotoPrintModel
+    let primary: PhotoPrintModel.Shot
+    let heightMM: Double
+    private(set) var used = false
+
+    init(model: PhotoPrintModel, primary: PhotoPrintModel.Shot, heightMM: Double) {
+        self.model = model
+        self.primary = primary
+        self.heightMM = heightMM
+    }
+
+    func submit(side: String, using manager: PrintJobManager) -> Bool {
+        guard !used, primary.depth != nil else { return false }
+        if !model.isFake {
+            guard let state = model.arView?.session.currentFrame?.camera.trackingState, case .normal = state else {
+                model.errorMessage = "Wait for camera tracking to recover before taking the extra photo."
+                return false
+            }
+        }
+        guard let shot = model.capture(), let depth = shot.depth else {
+            model.errorMessage = "Couldn't capture LiDAR depth. Frame the object and try again."
+            return false
+        }
+        let view = PhotoExtraView(photo: shot.photo, pose: shot.pose, depth: depth, side: side)
+        manager.start(input: .photo(primary.photo, heightMM: heightMM, pose: primary.pose,
+                                    depth: primary.depth, views: [view]),
+                      name: "Photo retake \(side)", kind: "photo", allowsOptimisation: true)
+        used = true
+        model.retainsSession = false
+        return true
+    }
+
+    func releaseSession() {
+        model.retainsSession = false
+        if model.arView?.window == nil { model.arView?.session.pause() }
+    }
+}
+
+private struct PhotoRetakeView: View {
+    @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject private var printJobs: PrintJobManager
+    @ObservedObject private var model: PhotoPrintModel
+    let context: PhotoRetakeContext
+    let side: String
+    let onSubmitted: () -> Void
+
+    init(context: PhotoRetakeContext, side: String, onSubmitted: @escaping () -> Void) {
+        self.context = context
+        self.side = side
+        self.onSubmitted = onSubmitted
+        model = context.model
+    }
+
+    var body: some View {
+        NavigationStack {
+            ZStack {
+                if model.isFake {
+                    Image(uiImage: PhotoPrintModel.sampleImage).resizable().scaledToFill().ignoresSafeArea()
+                } else {
+                    MeasureARView(model: model).ignoresSafeArea()
+                }
+                VStack {
+                    Text("Walk around to the \(side) and shoot it level. Keep the object still.")
+                        .multilineTextAlignment(.center).padding()
+                        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
+                    Spacer()
+                    if let error = model.errorMessage {
+                        Text(error).padding().background(.regularMaterial)
+                    }
+                    Button("Snap the \(side) & Print") {
+                        if context.submit(side: side, using: printJobs) {
+                            onSubmitted()
+                            dismiss()
+                        }
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .accessibilityIdentifier("captureModelSide")
+                }.padding()
+            }
+            .navigationTitle("Snap the \(side)")
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }
+                }
+            }
+        }
+    }
+}
+
+@MainActor
 final class PhotoPrintModel: ObservableObject {
     @Published private(set) var base: SIMD3<Float>?
     @Published private(set) var top: SIMD3<Float>?
@@ -223,9 +352,11 @@ final class PhotoPrintModel: ObservableObject {
     @Published var photoIssues: [PhotoCheck.Issue]?
     @Published private(set) var isPrinting = false
     @Published private(set) var progressText = "Checking the photo"
+    @Published var isRetaking = false
 
     let isFake: Bool
-    weak var arView: ARView?
+    var arView: ARView?
+    var retainsSession = false
     private var markers: [AnchorEntity] = []
     private var printTask: Task<Void, Never>?
     private var flaggedShot: Shot?
@@ -252,7 +383,7 @@ final class PhotoPrintModel: ObservableObject {
     }
 
     func handleTap(at point: CGPoint) {
-        guard let arView,
+        guard !isRetaking, let arView,
               let hit = arView.raycast(from: point, allowing: .estimatedPlane, alignment: .any).first else { return }
         let position = SIMD3<Float>(hit.worldTransform.columns.3.x, hit.worldTransform.columns.3.y, hit.worldTransform.columns.3.z)
         if base == nil || top != nil {
@@ -317,7 +448,9 @@ final class PhotoPrintModel: ObservableObject {
 
     private func upload(_ shot: Shot, using manager: PrintJobManager) {
         guard let height = heightMM else { return }
-        manager.start(input: .photo(shot.photo, heightMM: height, pose: shot.pose, depth: shot.depth), name: Self.fileName(), kind: "photo", allowsOptimisation: true)
+        let context = shot.depth.map { _ in PhotoRetakeContext(model: self, primary: shot, heightMM: height) }
+        retainsSession = context != nil
+        manager.start(input: .photo(shot.photo, heightMM: height, pose: shot.pose, depth: shot.depth), name: Self.fileName(), kind: "photo", allowsOptimisation: true, retakeContext: context)
     }
 
     private func finishPrinting() {
@@ -340,7 +473,7 @@ final class PhotoPrintModel: ObservableObject {
 
     /// The current frame as a JPEG plus the camera pose and LiDAR depth. With depth the photo stays in sensor orientation
     /// (the server rotates it by `image_orientation`); without it the photo is rotated upright.
-    private func capture() -> Shot? {
+    fileprivate func capture() -> Shot? {
         if isFake {
             guard let photo = Self.sampleImage.jpegData(compressionQuality: 0.9) else { return nil }
             let pose = Self.samplePose(pitchDegrees: Self.fakePitchDegrees)
@@ -455,6 +588,12 @@ private struct MeasureARView: UIViewRepresentable {
     let model: PhotoPrintModel
 
     func makeUIView(context: Context) -> ARView {
+        if let view = model.arView {
+            for recognizer in view.gestureRecognizers ?? [] { view.removeGestureRecognizer(recognizer) }
+            view.addGestureRecognizer(UITapGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.tapped(_:))))
+            if let configuration = view.session.configuration { view.session.run(configuration) }
+            return view
+        }
         let view = ARView(frame: .zero, cameraMode: .ar, automaticallyConfigureSession: false)
         let configuration = ARWorldTrackingConfiguration()
         configuration.planeDetection = [.horizontal, .vertical]
@@ -473,19 +612,19 @@ private struct MeasureARView: UIViewRepresentable {
     func updateUIView(_ view: ARView, context: Context) {}
 
     static func dismantleUIView(_ view: ARView, coordinator: Coordinator) {
-        view.session.pause()
+        if coordinator.model?.retainsSession != true { view.session.pause() }
     }
 
     func makeCoordinator() -> Coordinator { Coordinator(model: model) }
 
     @MainActor
     final class Coordinator: NSObject {
-        let model: PhotoPrintModel
+        weak var model: PhotoPrintModel?
         init(model: PhotoPrintModel) { self.model = model }
 
         @objc func tapped(_ recognizer: UITapGestureRecognizer) {
             guard let view = recognizer.view else { return }
-            model.handleTap(at: recognizer.location(in: view))
+            model?.handleTap(at: recognizer.location(in: view))
         }
     }
 }

@@ -33,7 +33,9 @@ response and inline STL. POST /print with `job_id` and
 joined by "-": /fail (job errors at repair), /expire (each job's first URL per file is already expired),
 /drop (the first submit of each job reports its first file missing), /legacy (no /print/uploads: 405),
 /deny (every PUT is refused 403 AccessDenied, like a bucket without an IAM policy),
-/slow (every PUT takes 4 s, so a test can quit the app mid-upload).
+/slow (every PUT takes 4 s, so a test can quit the app mid-upload), /modelbad (bad back;
+an extra view suggests Object Scan), /modelscan (suggest Object Scan immediately),
+/modelskip (model check unavailable). Object photos with model_check=true include the verdict.
 
 POST /photo-check takes `photo` plus optional `camera_transform` and answers
 `{ok, issues: [{code, message}], camera_pitch_deg, angle_checked, max_pitch_deg}`; like the
@@ -76,7 +78,7 @@ def upload_filename(name):
 
 
 MESH_TYPES = {"model/vnd.usdz+zip": ".usdz", "model/obj": ".obj", "application/x-ply": ".ply"}
-MODES = ("fail", "expire", "drop", "legacy", "deny", "slow", "skipopt")
+MODES = ("fail", "expire", "drop", "legacy", "deny", "slow", "skipopt", "modelbad", "modelscan", "modelskip")
 UPLOAD_EXPIRES = 900
 
 
@@ -121,6 +123,8 @@ class Job:
 
     def run(self, delay, fail_stage):
         stages = ["upload", "background removal", "TripoSR", "depth fusion", "repair", "export"]
+        if "model_check" in self.report:
+            stages.insert(-2, "review")
         if "optimise" in self.report:
             stages.insert(-1, "optimise")
         for index, stage in enumerate(stages):
@@ -599,6 +603,20 @@ class Handler(BaseHTTPRequestHandler):
 
         self.log_message("print request: %s", source)
         report = {"extents_mm": [20.0, 20.0, 20.0], "watertight": True, "volume_cm3": 8.0}
+        if parts.get("model_check", (None, b"false"))[1] == b"true":
+            retake = parts.get("view_count", (None, b"1"))[1] == b"2"
+            bad = bool(modes.intersection(("modelbad", "modelscan")))
+            scan = bad and (retake or "modelscan" in modes)
+            report["model_check"] = {
+                "ok": not bad,
+                "sides": [{"side": "back", "ok": not bad, "message":
+                           "Try a walk-around Object Scan." if scan else
+                           "The back may be missing parts. Take another photo of the back." if bad else "Looks good."}],
+                "retake_side": "back" if bad and not scan else None,
+                "suggest_scan": scan,
+            }
+            if "modelskip" in modes:
+                report["model_check"] = {"skipped": "Vision unavailable"}
         if optimise == b"true":
             report["optimise"] = (
                 {"skipped": "No material could be safely removed."} if "skipopt" in modes else

@@ -22,18 +22,60 @@ struct PrintOptimisation: Codable, Equatable {
     }
 }
 
+struct PrintModelCheck: Codable, Equatable {
+    struct Side: Codable, Equatable {
+        let side: String
+        let ok: Bool
+        let message: String
+    }
+
+    let ok: Bool
+    let sides: [Side]
+    let retakeSide: String?
+    let suggestScan: Bool
+
+    private enum CodingKeys: String, CodingKey {
+        case ok, sides
+        case retakeSide = "retake_side"
+        case suggestScan = "suggest_scan"
+    }
+}
+
+struct PhotoExtraView {
+    let photo: Data
+    let pose: CameraPose
+    let depth: DepthCapture
+    let side: String
+    var depthIntrinsics: CameraIntrinsics? = nil
+    var depthExtrinsics: [Float]? = nil
+}
+
 struct PrintReport: Decodable {
     let optimise: PrintOptimisation?
+    let modelCheck: PrintModelCheck?
+
+    private enum CodingKeys: String, CodingKey { case optimise, modelCheck = "model_check" }
+
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        optimise = try? values.decodeIfPresent(PrintOptimisation.self, forKey: .optimise)
+        modelCheck = try? values.decodeIfPresent(PrintModelCheck.self, forKey: .modelCheck)
+    }
+
+    static func report(in response: HTTPURLResponse) -> PrintReport? {
+        guard let report = response.value(forHTTPHeaderField: "X-Print-Report") else { return nil }
+        return try? JSONDecoder().decode(Self.self, from: Data(report.utf8))
+    }
 
     static func optimisation(in response: HTTPURLResponse) -> PrintOptimisation? {
-        guard let report = response.value(forHTTPHeaderField: "X-Print-Report") else { return nil }
-        return (try? JSONDecoder().decode(Self.self, from: Data(report.utf8)))?.optimise
+        report(in: response)?.optimise
     }
 }
 
 struct PrintOutput {
     let url: URL
     var optimisation: PrintOptimisation? = nil
+    var modelCheck: PrintModelCheck? = nil
 }
 
 extension URL {
@@ -44,7 +86,7 @@ extension URL {
 /// What gets sent to the print endpoint: a scan's mesh, a single photo plus the LiDAR-measured object height, or a TrueDepth face for a bust.
 enum PrintInput {
     case mesh(URL)
-    case photo(Data, heightMM: Double, pose: CameraPose? = nil, depth: DepthCapture? = nil)
+    case photo(Data, heightMM: Double, pose: CameraPose? = nil, depth: DepthCapture? = nil, views: [PhotoExtraView] = [])
     case face(FaceCapture)
 }
 
@@ -189,8 +231,9 @@ struct PrintService {
         switch input {
         case .mesh(let url):
             form.addFile(name: "mesh", fileName: url.lastPathComponent, contentType: Self.contentType(for: url), data: try Data(contentsOf: url))
-        case .photo(let data, let heightMM, let pose, let depth):
+        case .photo(let data, let heightMM, let pose, let depth, let views):
             form.addFile(name: "photo", fileName: "photo.jpg", contentType: "image/jpeg", data: data)
+            form.addField(name: "model_check", value: "true")
             form.addField(name: "height_mm", value: String(format: "%.1f", locale: Locale(identifier: "en_US_POSIX"), heightMM))
             if let pose {
                 form.addField(name: "image_orientation", value: String(pose.imageOrientation.rawValue))
@@ -198,6 +241,29 @@ struct PrintService {
             }
             if let depth {
                 try Self.addDepth(depth, to: &form)
+            }
+            if !views.isEmpty {
+                guard depth != nil, views.count == 1 else {
+                    throw PrintError.unexpectedResponse("An extra photo needs the original LiDAR depth and one retake.")
+                }
+                let encoder = JSONEncoder()
+                encoder.outputFormatting = .sortedKeys
+                form.addField(name: "view_count", value: "2")
+                let view = views[0]
+                form.addFile(name: "view_1_photo", fileName: "view_1.jpg", contentType: "image/jpeg", data: view.photo)
+                form.addFile(name: "view_1_depth", fileName: "view_1.f32", contentType: "application/octet-stream", data: view.depth.depthData)
+                form.addField(name: "view_1_depth_width", value: String(view.depth.width))
+                form.addField(name: "view_1_depth_height", value: String(view.depth.height))
+                form.addField(name: "view_1_intrinsics", value: String(decoding: try encoder.encode(view.depth.intrinsics), as: UTF8.self))
+                form.addField(name: "view_1_camera_transform", value: String(decoding: try encoder.encode(view.pose.cameraTransform), as: UTF8.self))
+                form.addField(name: "view_1_image_orientation", value: String(view.pose.imageOrientation.rawValue))
+                form.addField(name: "view_1_side", value: view.side)
+                if let intrinsics = view.depthIntrinsics {
+                    form.addField(name: "view_1_depth_intrinsics", value: String(decoding: try encoder.encode(intrinsics), as: UTF8.self))
+                }
+                if let extrinsics = view.depthExtrinsics {
+                    form.addField(name: "view_1_depth_extrinsics", value: String(decoding: try encoder.encode(extrinsics), as: UTF8.self))
+                }
             }
         case .face(let capture):
             try capture.addFields(to: &form)
@@ -454,21 +520,21 @@ struct PrintService {
 
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let url = directory.appendingPathComponent(name).appendingPathExtension("stl")
-        let optimisation: PrintOptimisation?
+        let report: PrintReport?
         switch result {
-        case .bytes(let data, let report):
+        case .bytes(let data, let receivedReport):
             try data.write(to: url, options: .atomic)
-            optimisation = report
-        case .remote(let signedURL, let report):
+            report = receivedReport
+        case .remote(let signedURL, let receivedReport):
             let (data, response) = try await session.data(from: signedURL)
             guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode), !data.isEmpty else {
                 throw PrintError.server(status: (response as? HTTPURLResponse)?.statusCode ?? 0, message: "Couldn't download STL from storage")
             }
             try data.write(to: url, options: .atomic)
-            optimisation = report
+            report = receivedReport
         }
         await saveGCode(signedURL: transfer.gcodeURL, jobID: jobID ?? transfer.jobID, to: url.gcodeSidecar)
-        return PrintOutput(url: url, optimisation: optimisation)
+        return PrintOutput(url: url, optimisation: report?.optimise, modelCheck: report?.modelCheck)
     }
 
     /// Best effort: the STL stands on its own when the server didn't slice the model.
@@ -539,8 +605,8 @@ struct PrintService {
 
 private final class PrintTransfer: NSObject, URLSessionDataDelegate, @unchecked Sendable {
     enum Output {
-        case bytes(Data, PrintOptimisation?)
-        case remote(URL, PrintOptimisation?)
+        case bytes(Data, PrintReport?)
+        case remote(URL, PrintReport?)
     }
     private let queue = DispatchQueue(label: "PrintTransfer")
     private let configuration: URLSessionConfiguration
@@ -662,24 +728,24 @@ private final class PrintTransfer: NSObject, URLSessionDataDelegate, @unchecked 
             case "accepted":
                 if let id = event.job_id, !id.isEmpty { jobID = id; onAccepted(id) }
             case "progress":
-                onProgress(PrintProgress(stage: event.stage ?? "", message: event.message ?? event.stage ?? "Processing", progress: event.progress.map { min(1, max(0, $0)) }))
+                onProgress(PrintProgress(stage: event.stage ?? "", message: event.message ?? (event.stage == "review" ? "Checking the reconstructed shape" : event.stage ?? "Processing"), progress: event.progress.map { min(1, max(0, $0)) }))
             case "error":
                 finish(.failure(PrintError.jobFailed(event.detail ?? "Printing failed")))
             case "done":
                 struct DoneReport: Decodable { let report: PrintReport? }
-                let optimisation = (try? JSONDecoder().decode(DoneReport.self, from: line))?.report?.optimise
+                let report = (try? JSONDecoder().decode(DoneReport.self, from: line))?.report
                 gcodeURL = event.gcode_url
                 if let url = event.stl_url {
                     guard ["http", "https"].contains(url.scheme?.lowercased() ?? ""), url.host != nil else {
                         throw PrintError.unexpectedResponse("invalid STL download URL")
                     }
-                    finish(.success(.remote(url, optimisation)))
+                    finish(.success(.remote(url, report)))
                     return
                 }
                 guard let encoded = event.stl_base64, let data = Data(base64Encoded: encoded), !data.isEmpty else {
                     throw PrintError.unexpectedResponse("missing or invalid STL data")
                 }
-                finish(.success(.bytes(data, optimisation)))
+                finish(.success(.bytes(data, report)))
             default: break
             }
         } catch { finish(.failure(error)) }
@@ -701,7 +767,7 @@ private final class PrintTransfer: NSObject, URLSessionDataDelegate, @unchecked 
             finish(.failure(PrintError.unexpectedResponse(response.mimeType ?? "no content type")))
         } else if buffer.isEmpty {
             finish(.failure(PrintError.unexpectedResponse("empty body")))
-        } else { finish(.success(.bytes(buffer, PrintReport.optimisation(in: response)))) }
+        } else { finish(.success(.bytes(buffer, PrintReport.report(in: response)))) }
     }
 }
 
