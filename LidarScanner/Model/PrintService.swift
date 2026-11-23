@@ -36,6 +36,11 @@ struct PrintOutput {
     var optimisation: PrintOptimisation? = nil
 }
 
+extension URL {
+    /// The server's Creality K1C PLA G-code for an STL is kept beside it as `<name>.gcode`.
+    var gcodeSidecar: URL { deletingPathExtension().appendingPathExtension("gcode") }
+}
+
 /// What gets sent to the print endpoint: a scan's mesh, a single photo plus the LiDAR-measured object height, or a TrueDepth face for a bust.
 enum PrintInput {
     case mesh(URL)
@@ -420,23 +425,24 @@ struct PrintService {
         FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0].appendingPathComponent("PrintUploads", isDirectory: true)
     }
 
-    enum JobRoute: String { case events = "", result }
+    enum JobRoute: String { case events = "", result, gcode }
 
     func jobRequest(id: String, route: JobRoute = .events) -> URLRequest {
         var url = endpoint.appendingPathComponent(id)
         if !route.rawValue.isEmpty { url.appendPathComponent(route.rawValue) }
         var request = URLRequest(url: url, timeoutInterval: route == .result ? 86400 : 600)
-        request.setValue(route == .result ? "model/stl" : "application/x-ndjson", forHTTPHeaderField: "Accept")
+        let accept = ["": "application/x-ndjson", "result": "model/stl", "gcode": "text/x-gcode"][route.rawValue]
+        request.setValue(accept, forHTTPHeaderField: "Accept")
         if let token { request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization") }
         return request
     }
 
     func reattach(id: String, name: String, in directory: URL = PrintService.outputDirectory,
                   onProgress: @escaping @Sendable (PrintProgress) -> Void = { _ in }) async throws -> PrintOutput {
-        try await receive(jobRequest(id: id), name: name, in: directory, onProgress: onProgress, onAccepted: { _ in })
+        try await receive(jobRequest(id: id), name: name, in: directory, jobID: id, onProgress: onProgress, onAccepted: { _ in })
     }
 
-    private func receive(_ request: URLRequest, name: String, in directory: URL,
+    private func receive(_ request: URLRequest, name: String, in directory: URL, jobID: String? = nil,
                          onProgress: @escaping @Sendable (PrintProgress) -> Void,
                          onAccepted: @escaping @Sendable (String) -> Void) async throws -> PrintOutput {
         let transfer = PrintTransfer(configuration: session.configuration, stallTimeout: stallTimeout, onProgress: onProgress, onAccepted: onAccepted)
@@ -461,7 +467,22 @@ struct PrintService {
             try data.write(to: url, options: .atomic)
             optimisation = report
         }
+        await saveGCode(signedURL: transfer.gcodeURL, jobID: jobID ?? transfer.jobID, to: url.gcodeSidecar)
         return PrintOutput(url: url, optimisation: optimisation)
+    }
+
+    /// Best effort: the STL stands on its own when the server didn't slice the model.
+    private func saveGCode(signedURL: URL?, jobID: String?, to file: URL) async {
+        try? FileManager.default.removeItem(at: file)
+        let request: URLRequest
+        if let signedURL, ["http", "https"].contains(signedURL.scheme?.lowercased() ?? "") {
+            request = URLRequest(url: signedURL, timeoutInterval: 120)
+        } else if let jobID {
+            request = jobRequest(id: jobID, route: .gcode)
+        } else { return }
+        guard let (data, response) = try? await session.data(for: request),
+              let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode), !data.isEmpty else { return }
+        try? data.write(to: file, options: .atomic)
     }
 
     /// Photo + depth fusion fields: `depth` (float32 LE metres), `depth_confidence` (uint8), `depth_width`, `depth_height`,
@@ -531,6 +552,8 @@ private final class PrintTransfer: NSObject, URLSessionDataDelegate, @unchecked 
     private var watchdog: DispatchWorkItem?
     private var deadline: DispatchWorkItem?
     private var cancelled = false
+    private(set) var jobID: String?
+    private(set) var gcodeURL: URL?
 
     init(configuration: URLSessionConfiguration, stallTimeout: TimeInterval, onProgress: @escaping @Sendable (PrintProgress) -> Void, onAccepted: @escaping @Sendable (String) -> Void) {
         self.configuration = configuration
@@ -623,6 +646,7 @@ private final class PrintTransfer: NSObject, URLSessionDataDelegate, @unchecked 
         let detail: String?
         let stl_base64: String?
         let stl_url: URL?
+        let gcode_url: URL?
         let job_id: String?
     }
 
@@ -634,7 +658,7 @@ private final class PrintTransfer: NSObject, URLSessionDataDelegate, @unchecked 
             let event = try JSONDecoder().decode(Event.self, from: line)
             switch event.type {
             case "accepted":
-                if let id = event.job_id, !id.isEmpty { onAccepted(id) }
+                if let id = event.job_id, !id.isEmpty { jobID = id; onAccepted(id) }
             case "progress":
                 onProgress(PrintProgress(stage: event.stage ?? "", message: event.message ?? event.stage ?? "Processing", progress: event.progress.map { min(1, max(0, $0)) }))
             case "error":
@@ -642,6 +666,7 @@ private final class PrintTransfer: NSObject, URLSessionDataDelegate, @unchecked 
             case "done":
                 struct DoneReport: Decodable { let report: PrintReport? }
                 let optimisation = (try? JSONDecoder().decode(DoneReport.self, from: line))?.report?.optimise
+                gcodeURL = event.gcode_url
                 if let url = event.stl_url {
                     guard ["http", "https"].contains(url.scheme?.lowercased() ?? ""), url.host != nil else {
                         throw PrintError.unexpectedResponse("invalid STL download URL")

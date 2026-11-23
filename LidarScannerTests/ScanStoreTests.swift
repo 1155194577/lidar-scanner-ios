@@ -116,6 +116,25 @@ final class ScanStoreTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: source.path))
     }
 
+    func testServerGCodeTravelsWithTheSavedSTLAndIsDeletedWithIt() throws {
+        let store = ScanStore(directory: directory)
+        let work = directory.appendingPathComponent("work", isDirectory: true)
+        try FileManager.default.createDirectory(at: work, withIntermediateDirectories: true)
+        let source = work.appendingPathComponent("mug.stl")
+        try Data("solid".utf8).write(to: source)
+        try Data("START_PRINT".utf8).write(to: source.gcodeSidecar)
+        try store.savePrint(source, kind: .photo)
+        let saved = try XCTUnwrap(store.scans(of: .photo).first)
+        XCTAssertEqual(saved.printedGCodeURL?.lastPathComponent, "mug.gcode")
+        XCTAssertEqual(try Data(contentsOf: XCTUnwrap(saved.printedGCodeURL)), Data("START_PRINT".utf8))
+        try store.delete(saved)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: saved.url.gcodeSidecar.path))
+
+        try FileManager.default.removeItem(at: source.gcodeSidecar)
+        try store.savePrint(source, kind: .photo)
+        XCTAssertNil(try XCTUnwrap(store.scans(of: .photo).first).printedGCodeURL)
+    }
+
     func testKindFromFileName() {
         XCTAssertEqual(ScanStore.kind(forFileName: "Room 2026-01-01.usdz"), .room)
         XCTAssertEqual(ScanStore.kind(forFileName: "Object 2026-01-01.usdz"), .object)

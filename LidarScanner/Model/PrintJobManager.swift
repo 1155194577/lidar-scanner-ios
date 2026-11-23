@@ -424,7 +424,9 @@ final class PrintJobManager: ObservableObject {
     enum Transfer { case stream, download }
 
     private func removeTransferFile(_ id: String) {
-        try? FileManager.default.removeItem(at: Self.directory.appendingPathComponent(id).appendingPathExtension("stl"))
+        let stl = Self.directory.appendingPathComponent(id).appendingPathExtension("stl")
+        try? FileManager.default.removeItem(at: stl)
+        try? FileManager.default.removeItem(at: stl.gcodeSidecar)
     }
 
     func complete(id: String, result: Result<PrintOutput, Error>, source: Transfer = .stream) {
@@ -455,6 +457,8 @@ final class PrintJobManager: ObservableObject {
                 let fileName = jobs[index].name.replacingOccurrences(of: "/", with: "-")
                 let target = folder.appendingPathComponent(fileName).appendingPathExtension("stl")
                 try Data(contentsOf: output.url).write(to: target, options: .atomic)
+                try? FileManager.default.removeItem(at: target.gcodeSidecar)
+                try? FileManager.default.copyItem(at: output.url.gcodeSidecar, to: target.gcodeSidecar)
                 jobs[index].result = target
                 jobs[index].optimisation = output.optimisation
                 removeTransferFile(id)
