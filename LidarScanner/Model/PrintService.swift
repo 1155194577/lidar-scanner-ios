@@ -533,13 +533,15 @@ struct PrintService {
             try data.write(to: url, options: .atomic)
             report = receivedReport
         }
-        await saveGCode(signedURL: transfer.gcodeURL, jobID: jobID ?? transfer.jobID, to: url.gcodeSidecar)
+        try? FileManager.default.removeItem(at: url.gcodeSidecar)
+        if transfer.sliced {
+            await saveGCode(signedURL: transfer.gcodeURL, jobID: jobID ?? transfer.jobID, to: url.gcodeSidecar)
+        }
         return PrintOutput(url: url, optimisation: report?.optimise, modelCheck: report?.modelCheck)
     }
 
     /// Best effort: the STL stands on its own when the server didn't slice the model.
     private func saveGCode(signedURL: URL?, jobID: String?, to file: URL) async {
-        try? FileManager.default.removeItem(at: file)
         var request: URLRequest
         if let signedURL, ["http", "https"].contains(signedURL.scheme?.lowercased() ?? "") {
             request = URLRequest(url: signedURL)
@@ -622,6 +624,8 @@ private final class PrintTransfer: NSObject, URLSessionDataDelegate, @unchecked 
     private var cancelled = false
     private(set) var jobID: String?
     private(set) var gcodeURL: URL?
+    /// The done report says the server sliced G-code for this print.
+    private(set) var sliced = false
 
     init(configuration: URLSessionConfiguration, stallTimeout: TimeInterval, onProgress: @escaping @Sendable (PrintProgress) -> Void, onAccepted: @escaping @Sendable (String) -> Void) {
         self.configuration = configuration
@@ -734,7 +738,14 @@ private final class PrintTransfer: NSObject, URLSessionDataDelegate, @unchecked 
             case "done":
                 struct DoneReport: Decodable { let report: PrintReport? }
                 let report = (try? JSONDecoder().decode(DoneReport.self, from: line))?.report
+                struct DoneSlice: Decodable {
+                    struct Report: Decodable { let gcode: GCode? }
+                    struct GCode: Decodable { let skipped: String?; let size_bytes: Int? }
+                    let report: Report?
+                }
+                let slice = (try? JSONDecoder().decode(DoneSlice.self, from: line))?.report?.gcode
                 gcodeURL = event.gcode_url
+                sliced = event.gcode_url != nil || (slice != nil && slice?.skipped == nil && (slice?.size_bytes ?? 0) > 0)
                 if let url = event.stl_url {
                     guard ["http", "https"].contains(url.scheme?.lowercased() ?? ""), url.host != nil else {
                         throw PrintError.unexpectedResponse("invalid STL download URL")
