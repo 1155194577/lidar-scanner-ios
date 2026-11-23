@@ -434,7 +434,7 @@ final class LidarScannerUITests: XCTestCase {
         let capture = app.buttons["captureModelSide"]
         XCTAssertTrue(capture.waitForExistence(timeout: 5))
         capture.tap()
-        let retakenResult = app.buttons["printResultButton"].element(boundBy: 1)
+        let retakenResult = app.buttons.matching(identifier: "printResultButton").element(boundBy: 1)
         XCTAssertTrue(retakenResult.waitForExistence(timeout: 30))
         retakenResult.tap()
         let scan = app.buttons["tryWalkAroundScan"]
