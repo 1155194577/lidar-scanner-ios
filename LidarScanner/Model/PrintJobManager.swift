@@ -168,7 +168,7 @@ final class PrintJobManager: ObservableObject {
                 let url = try await OnDeviceTripoSR.makeSTL(photo: input.photo, heightMM: input.heightMM) { progress in
                     Task { @MainActor in self.update(job.id, progress: progress) }
                 }
-                complete(id: job.id, result: .success(url))
+                complete(id: job.id, result: .success(PrintOutput(url: url)))
                 try? FileManager.default.removeItem(at: url)
             } catch {
                 complete(id: job.id, result: .failure(error))
