@@ -474,12 +474,14 @@ struct PrintService {
     /// Best effort: the STL stands on its own when the server didn't slice the model.
     private func saveGCode(signedURL: URL?, jobID: String?, to file: URL) async {
         try? FileManager.default.removeItem(at: file)
-        let request: URLRequest
+        var request: URLRequest
         if let signedURL, ["http", "https"].contains(signedURL.scheme?.lowercased() ?? "") {
-            request = URLRequest(url: signedURL, timeoutInterval: 120)
+            request = URLRequest(url: signedURL)
         } else if let jobID {
             request = jobRequest(id: jobID, route: .gcode)
         } else { return }
+        // The finished STL is held back until this returns, so the extra file gets a short leash.
+        request.timeoutInterval = 20
         guard let (data, response) = try? await session.data(for: request),
               let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode), !data.isEmpty else { return }
         try? data.write(to: file, options: .atomic)
