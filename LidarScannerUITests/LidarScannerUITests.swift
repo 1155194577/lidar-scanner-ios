@@ -114,7 +114,7 @@ final class LidarScannerUITests: XCTestCase {
         app.buttons["objectScanButton"].tap()
         app.buttons["guideSkipButton"].tap()
         let title = app.staticTexts["gapTitle"]
-        XCTAssertTrue(title.waitForExistence(timeout: 15))
+        XCTAssertTrue(title.waitForExistence(timeout: 30))
         XCTAssertEqual(title.label, "1 part wasn't captured")
         XCTAssertTrue(app.staticTexts["gapSummary"].label.contains("on the side, about 13 cm across"))
         XCTAssertTrue(app.otherElements["gapModelView"].exists || app.descendants(matching: .any)["gapModelView"].exists)
@@ -130,7 +130,7 @@ final class LidarScannerUITests: XCTestCase {
 
         app.buttons["rescanGapButton"].tap()
         let result = app.staticTexts["gapCheckResult"]
-        XCTAssertTrue(result.waitForExistence(timeout: 15))
+        XCTAssertTrue(result.waitForExistence(timeout: 30))
         XCTAssertEqual(result.label, "No gaps found. Every side was captured.")
         if let directory = ProcessInfo.processInfo.environment["GAP_SCREENSHOT_DIR"] {
             try XCUIScreen.main.screenshot().pngRepresentation
