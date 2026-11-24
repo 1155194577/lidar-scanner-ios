@@ -607,7 +607,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				PRINT_BASE_URL = "https://slesvci--3d-print-web.us-east.modal.run";
+				PRINT_BASE_URL = "https://47-237-92-84.sslip.io";
 				PRODUCT_BUNDLE_IDENTIFIER = com.lidarscanner.app;
 				SDKROOT = iphoneos;
 				TARGETED_DEVICE_FAMILY = "1,2";
@@ -686,7 +686,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				PRINT_BASE_URL = "https://slesvci--3d-print-web.us-east.modal.run";
+				PRINT_BASE_URL = "https://47-237-92-84.sslip.io";
 				PRODUCT_BUNDLE_IDENTIFIER = com.lidarscanner.app;
 				SDKROOT = iphoneos;
 				TARGETED_DEVICE_FAMILY = "1,2";
